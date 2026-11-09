@@ -271,7 +271,7 @@ impl Library {
             self.section(crate::i18n::tl("Notizen"), &[], &files, false);
         }
         if dirs.is_empty() && files.is_empty() {
-            let s = adw::StatusPage::builder().icon_name("folder-symbolic").title("Leerer Ordner").build();
+            let s = adw::StatusPage::builder().icon_name("folder-symbolic").title(crate::i18n::tl("Leerer Ordner")).build();
             self.content.append(&s);
         }
     }

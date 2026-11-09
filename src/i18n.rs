@@ -39,6 +39,7 @@ macro_rules! tr {
 }
 
 static EN: &[(&str, &str)] = &[
+    ("Leerer Ordner", "Empty folder"),
     ("Papier", "Paper"),
     ("KI", "AI"),
     ("Bild kann nicht gelesen werden", "The image cannot be read"),
