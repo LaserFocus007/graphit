@@ -1501,6 +1501,16 @@ impl Win {
         self.toasts.add_toast(adw::Toast::new(msg));
     }
 
+    /// Hinweis auf eine neue Version mit Knopf zur Download-Seite.
+    pub fn offer_update(&self, version: &str, url: &str) {
+        let toast = adw::Toast::builder().title(format!("Graphit {version} ist verfügbar")).button_label("Ansehen").timeout(12).build();
+        let (window, url) = (self.window.clone(), url.to_string());
+        toast.connect_button_clicked(move |_| {
+            gtk::UriLauncher::new(&url).launch(Some(&window), gio::Cancellable::NONE, |_| {});
+        });
+        self.toasts.add_toast(toast);
+    }
+
     // ---------------------------------------------------------------- Dateien
 
     /// Öffnet eine Datei in einem Tab (oder wechselt zum Tab, falls schon offen).

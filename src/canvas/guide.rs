@@ -283,6 +283,20 @@ impl Canvas {
         Some(Rect::new((o.x + r.x0 - st.cam.x) * z, (o.y + r.y0 - st.cam.y) * z, (o.x + r.x1 - st.cam.x) * z, (o.y + r.y1 - st.cam.y) * z))
     }
 
+    /// Seite und Rechteck der Zeichen in Seitenkoordinaten.
+    pub fn guide_page_area(&self) -> Option<(usize, Rect)> {
+        let st = self.st();
+        let g = st.guide.as_ref()?;
+        Some((g.page, guide_area(&g.marks, &g.sketch)?))
+    }
+
+    /// Rechteck einer Seite in Widget-Koordinaten.
+    pub fn page_rect_on_screen(&self, page: usize, r: Rect) -> Rect {
+        let st = self.st();
+        let (o, z) = (st.page_origin(page), st.zoom);
+        Rect::new((o.x + r.x0 - st.cam.x) * z, (o.y + r.y0 - st.cam.y) * z, (o.x + r.x1 - st.cam.x) * z, (o.y + r.y1 - st.cam.y) * z)
+    }
+
     pub(super) fn draw_guide(&self, st: &State, snap: &gtk::Snapshot) {
         let Some(g) = &st.guide else { return };
         let p = g.progress;

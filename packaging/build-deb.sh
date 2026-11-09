@@ -36,7 +36,7 @@ Architecture: amd64
 Maintainer: Graphit <graphit@users.noreply.github.com>
 Installed-Size: $SIZE
 Depends: $DEPENDS
-Recommends: poppler-utils, pandoc, texlive-latex-base, texlive-latex-recommended, texlive-fonts-recommended, alsa-utils
+Recommends: glib-networking, poppler-utils, pandoc, texlive-latex-base, texlive-latex-recommended, texlive-fonts-recommended, alsa-utils
 Suggests: speech-dispatcher
 Description: Handschriftliche Notizen und PDF-Annotation
  Notiz-App für Stift und Touchscreen, kompatibel mit Xournal++-Dateien.

@@ -254,6 +254,10 @@ pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas) {
     let exams = (!cfg.exam_root.is_empty()).then(|| std::path::PathBuf::from(&cfg.exam_root));
     folders.add(&crate::welcome::folder_row("Altklausuren", &dialog, Rc::new(RefCell::new(exams)), "Old_exams im Notizordner", Rc::new(move |p| update(&cc, |s| s.exam_root = p.display().to_string()))));
     page.add(&folders);
+    let about = adw::PreferencesGroup::builder().title("Programm").description(format!("Installiert: Version {}", env!("CARGO_PKG_VERSION"))).build();
+    let cc = c.clone();
+    about.add(&switch("Nach neuen Versionen suchen", "Fragt höchstens einmal am Tag bei GitHub nach. GitHub sieht dabei deine IP-Adresse.", cfg.update_check, move |on| update(&cc, |s| s.update_check = on)));
+    page.add(&about);
     let g = adw::PreferencesGroup::builder()
         .title("Neue Seiten")
         .description("Gilt für neue Dokumente und für Seiten, die nach einem PDF eingefügt werden. Einzelne Seiten änderst du im Menü unter „Papier dieser Seite“ oder in der Seitenleiste.")

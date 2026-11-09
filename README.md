@@ -22,6 +22,8 @@ sudo apt install ./graphit_*_amd64.deb
 
 Beim ersten Start wählst du deinen Notizordner.
 
+Graphit fragt höchstens einmal am Tag bei GitHub nach einer neuen Version und zeigt dann einen Hinweis. GitHub sieht dabei deine IP-Adresse. Abschalten kannst du das unter Einstellungen, Papier, Programm.
+
 ## Optionale Helfer
 
 | Funktion | Nötig |

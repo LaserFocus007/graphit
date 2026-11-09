@@ -35,6 +35,8 @@ const MEMORY_FILE: &str = "gedaechtnis.md";
 const CONTEXT_FILE: &str = "kontext";
 /// Ab dieser Kontextgröße wird das Gespräch gleich nach der Antwort zusammengefasst.
 /// Rund 20.000 Tokens davon sind Claude Codes fester Sockel.
+/// So weit muss sich die Spitze bewegen, bis die Lernkarte mitgeht.
+const CARD_DRAG_START: f64 = 7.0;
 const COMPACT_AT: u32 = 100_000;
 /// Ab hier nach einer Pause: kurz bevor der Cache abläuft, ist das Zusammenfassen billig,
 /// danach müsste die nächste Frage das ganze Gespräch neu einlesen.
@@ -583,20 +585,47 @@ pub fn parse_tour(json: &str) -> (Vec<Step>, Vec<String>) {
     (steps, hints)
 }
 
+/// Auf welcher Seite der Stelle die Lernkarte steht.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CardSide {
+    Right,
+    Left,
+    Below,
+    Above,
+}
+
 /// Wo die Lernkarte hinkommt: neben die Stelle, sonst darunter oder darüber.
+#[cfg(test)]
 pub fn card_position(mark: Option<Rect>, card: (f64, f64), view: (f64, f64), bottom: f64) -> (f64, f64) {
+    card_position_near(mark, card, view, bottom, None).0
+}
+
+/// Wie [`card_position`], bleibt aber auf der bisherigen Seite, solange die Karte dort passt.
+pub fn card_position_near(mark: Option<Rect>, card: (f64, f64), view: (f64, f64), bottom: f64, prefer: Option<CardSide>) -> ((f64, f64), Option<CardSide>) {
     let (cw, ch) = card;
     let (w, h) = view;
     let gap = 28.0;
     let pad = 12.0;
-    let (x, y) = match mark {
-        None => ((w - cw) / 2.0, h - ch - bottom - 60.0),
-        Some(r) if r.x1 + gap + cw <= w - pad => (r.x1 + gap, r.y0 - 8.0),
-        Some(r) if r.x0 - gap - cw >= pad => (r.x0 - gap - cw, r.y0 - 8.0),
-        Some(r) if r.y1 + gap + ch <= h - bottom => (r.x0, r.y1 + gap),
-        Some(r) => (r.x0, r.y0 - gap - ch),
+    let (x, y, side) = match mark {
+        None => ((w - cw) / 2.0, h - ch - bottom - 60.0, None),
+        Some(r) => {
+            let fits = |s: &CardSide| match s {
+                CardSide::Right => r.x1 + gap + cw <= w - pad,
+                CardSide::Left => r.x0 - gap - cw >= pad,
+                CardSide::Below => r.y1 + gap + ch <= h - bottom,
+                CardSide::Above => r.y0 - gap - ch >= pad,
+            };
+            let side = prefer.filter(fits).or([CardSide::Right, CardSide::Left, CardSide::Below].into_iter().find(fits)).unwrap_or(CardSide::Above);
+            let (x, y) = match side {
+                CardSide::Right => (r.x1 + gap, r.y0 - 8.0),
+                CardSide::Left => (r.x0 - gap - cw, r.y0 - 8.0),
+                CardSide::Below => (r.x0, r.y1 + gap),
+                CardSide::Above => (r.x0, r.y0 - gap - ch),
+            };
+            (x, y, Some(side))
+        }
     };
-    (x.clamp(pad, (w - cw - pad).max(pad)), y.clamp(pad, (h - ch - bottom).max(pad)))
+    ((x.clamp(pad, (w - cw - pad).max(pad)), y.clamp(pad, (h - ch - bottom).max(pad))), side)
 }
 
 // ------------------------------------------------------------------------ Dialog
@@ -736,7 +765,11 @@ pub struct ClaudePanel {
     guide_placed: Cell<bool>,
     /// vom Nutzer gezogener Abstand zur Standardposition, je Schritt: die Karte
     /// bleibt so an ihrer Stelle im Dokument verankert
-    guide_offsets: RefCell<Vec<(f64, f64)>>,
+    guide_offsets: RefCell<Vec<Option<(f64, f64)>>>,
+    /// Bisherige Seite der Karte, damit sie beim Scrollen nicht hin und her wechselt
+    guide_side: Cell<Option<CardSide>>,
+    /// Stelle dieses Schritts auf der Seite. Fest, damit spätere Zeichen die Karte nicht versetzen.
+    guide_anchor: Cell<Option<(usize, Rect)>>,
     /// laufendes Ziehen: Startpunkt im Fenster und Abstand beim Start
     guide_drag: Cell<Option<(f64, f64, f64, f64)>>,
     /// als Spalte angeheftet statt schwebend
@@ -1074,6 +1107,8 @@ impl ClaudePanel {
             tour_view: RefCell::new(None),
             guide_placed: Cell::new(false),
             guide_offsets: RefCell::new(Vec::new()),
+            guide_side: Cell::new(None),
+            guide_anchor: Cell::new(None),
             guide_drag: Cell::new(None),
             pinned: Cell::new(cfg.claude_pinned),
             pos: Cell::new(if cfg.claude_x >= 0.0 { (cfg.claude_x, cfg.claude_y) } else { CARD_HOME }),
@@ -1153,6 +1188,7 @@ impl ClaudePanel {
                 p.run_quick(row.index());
             }
         });
+        self.connect_quick_pen();
         let w = Rc::downgrade(self);
         self.style.connect_selected_notify(move |d| {
             if let Some(p) = w.upgrade().filter(|p| !p.model_setting.get()) {
@@ -1588,7 +1624,7 @@ impl ClaudePanel {
             }
             match et {
                 E::ButtonPress if ev.downcast_ref::<gdk::ButtonEvent>().is_some_and(|b| b.button() == gdk::BUTTON_PRIMARY) => {
-                    let Some(at) = p.pad_point(ev) else { return glib::Propagation::Stop };
+                    let Some(at) = widget_point(&p.pad, ev) else { return glib::Propagation::Stop };
                     writing.set(true);
                     p.strokes.borrow_mut().push(vec![at]);
                     p.pad.queue_draw();
@@ -1598,7 +1634,7 @@ impl ClaudePanel {
                     // das Loslassen kann verloren gehen, etwa wenn ein Dialog aufgeht
                     if !ev.modifier_state().contains(gdk::ModifierType::BUTTON1_MASK) {
                         writing.set(false);
-                    } else if let Some(at) = p.pad_point(ev) {
+                    } else if let Some(at) = widget_point(&p.pad, ev) {
                         if let Some(s) = p.strokes.borrow_mut().last_mut() {
                             s.push(at);
                         }
@@ -1619,13 +1655,34 @@ impl ClaudePanel {
         });
     }
 
-    /// Fensterkoordinaten eines Ereignisses im Schreibfeld.
-    fn pad_point(&self, ev: &gdk::Event) -> Option<(f64, f64)> {
-        let (x, y) = ev.position()?;
-        let native = self.pad.native()?;
-        let (sx, sy) = native.surface_transform();
-        let p = native.compute_point(&self.pad, &gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32))?;
-        Some((p.x() as f64, p.y() as f64))
+    /// Stifttipps wertet die Liste selbst aus: Die Klick-Geste bricht bei leicht verrutschter
+    /// Spitze ab oder zählt schnelle Tipps als Doppeltipp, dann wird die Zeile nur markiert.
+    fn connect_quick_pen(self: &Rc<Self>) {
+        let input = gtk::EventControllerLegacy::new();
+        input.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let every_pointer = std::env::var("GRAPHIT_TAP_ALL").is_ok();
+        let w = Rc::downgrade(self);
+        let pressed = Cell::new(None::<i32>);
+        input.connect_event(move |_, ev| {
+            use gdk::EventType as E;
+            let et = ev.event_type();
+            let stylus = ev.device_tool().is_some() || ev.device().is_some_and(|d| d.source() == gdk::InputSource::Pen);
+            let primary = ev.downcast_ref::<gdk::ButtonEvent>().is_some_and(|b| b.button() == gdk::BUTTON_PRIMARY);
+            let Some(p) = w.upgrade().filter(|_| matches!(et, E::ButtonPress | E::ButtonRelease) && primary && (stylus || every_pointer)) else {
+                return glib::Propagation::Proceed;
+            };
+            let row = widget_point(&p.quick, ev).and_then(|(_, y)| p.quick.row_at_y(y as i32));
+            if et == E::ButtonPress {
+                pressed.set(row.map(|r| r.index()));
+            } else if let Some(row) = row.filter(|r| pressed.take() == Some(r.index())) {
+                // erst nach dem Ereignis: die Aktion baut die Liste um
+                glib::idle_add_local_once(move || {
+                    row.activate();
+                });
+            }
+            glib::Propagation::Stop
+        });
+        self.quick.add_controller(input);
     }
 
     /// Testhilfe: öffnet das Schreibfeld, nennt seine Lage und später die Striche darin.
@@ -1638,6 +1695,8 @@ impl ClaudePanel {
             if let Some(at) = p.pad.compute_point(&root, &gtk::graphene::Point::new(0.0, 0.0)) {
                 let (sx, sy) = p.pad.native().map_or((0.0, 0.0), |n| n.surface_transform());
                 eprintln!("PEN Feld {} {} {} {}", (at.x() as f64 + sx) as i32, (at.y() as f64 + sy) as i32, p.pad.width(), p.pad.height());
+                let last = p.quick.last_child().and_then(|r| r.compute_point(&root, &gtk::graphene::Point::new(40.0, 12.0)));
+                eprintln!("PEN Zeile {:?} sichtbar {}", last.map(|a| ((a.x() as f64 + sx) as i32, (a.y() as f64 + sy) as i32)), p.quick.is_visible());
             }
         });
         let w = Rc::downgrade(self);
@@ -1936,47 +1995,99 @@ impl ClaudePanel {
         self.update_bar();
     }
 
-    /// Lernkarte ziehen. Knöpfe und Text behalten ihre eigenen Gesten.
+    /// Die ganze Lernkarte ist Griff. Die Geste kommt vor den Kindern an: Ein Tipp erreicht
+    /// noch die Knöpfe, erst ab etwas Weg gehört die Bewegung der Karte.
     fn connect_card_drag(self: &Rc<Self>) {
         let g = gtk::GestureDrag::new();
-        g.set_button(0);
-        let w = Rc::downgrade(self);
-        g.connect_drag_begin(move |_, x, y| {
+        g.set_button(gdk::BUTTON_PRIMARY);
+        g.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let press = Rc::new(Cell::new(None::<(f64, f64)>));
+        let (w, start) = (Rc::downgrade(self), press.clone());
+        g.connect_drag_begin(move |g, x, y| {
             let Some(p) = w.upgrade() else { return };
-            let (ox, oy) = p.step_offset();
-            let at = p.guide.compute_point(&p.overlay, &gtk::graphene::Point::new(x as f32, y as f32));
-            p.guide_drag.set(at.map(|a| (a.x() as f64, a.y() as f64, ox, oy)));
+            p.guide_drag.set(None);
+            // Regler und Co. ziehen selbst, die Geste bleibt dann untätig
+            start.set(if p.card_child_drags(g, x, y) { None } else { gesture_point(g, &p.overlay) });
         });
         let w = Rc::downgrade(self);
-        let started = Rc::new(Cell::new(false));
-        let reset = started.clone();
-        g.connect_drag_update(move |g, dx, dy| {
-            let (Some(p), Some((sx, sy))) = (w.upgrade(), g.start_point()) else { return };
-            let Some((ax, ay, ox, oy)) = p.guide_drag.get() else { return };
-            let Some(now) = p.guide.compute_point(&p.overlay, &gtk::graphene::Point::new((sx + dx) as f32, (sy + dy) as f32)) else { return };
-            let (mx, my) = (now.x() as f64 - ax, now.y() as f64 - ay);
-            // erst ab etwas Weg: ein Tipp auf die Karte verschiebt nichts
-            if mx.hypot(my) < 6.0 && !started.get() {
-                return;
-            }
-            started.set(true);
-            g.set_state(gtk::EventSequenceState::Claimed);
-            if let Some(o) = p.guide_offsets.borrow_mut().get_mut(p.tour_idx.get()) {
-                *o = (ox + mx, oy + my);
+        g.connect_drag_update(move |g, _, _| {
+            let (Some(p), Some(start)) = (w.upgrade(), press.get()) else { return };
+            let Some(now) = gesture_point(g, &p.overlay) else { return };
+            let base = p.guide_drag.get().or_else(|| {
+                if (now.0 - start.0).hypot(now.1 - start.1) < CARD_DRAG_START {
+                    return None;
+                }
+                g.set_state(gtk::EventSequenceState::Claimed);
+                // ab hier zählt der Weg, die Karte macht beim Losgehen keinen Satz
+                let base = (now.0, now.1, p.guide.margin_start() as f64, p.guide.margin_top() as f64);
+                p.guide_drag.set(Some(base));
+                Some(base)
+            });
+            if let Some((px, py, cx, cy)) = base {
+                p.drag_card_to(cx + now.0 - px, cy + now.1 - py);
             }
         });
         let w = Rc::downgrade(self);
         g.connect_drag_end(move |_, _, _| {
-            reset.set(false);
             if let Some(p) = w.upgrade() {
-                p.guide_drag.set(None);
+                if p.guide_drag.take().is_some() && std::env::var("GRAPHIT_PROFILE").is_ok() {
+                    eprintln!("PROFILE Karte bei {} {} Schritt {}", p.guide.margin_start(), p.guide.margin_top(), p.tour_idx.get() + 1);
+                }
             }
         });
         self.guide.add_controller(g);
     }
 
-    fn step_offset(&self) -> (f64, f64) {
-        self.guide_offsets.borrow().get(self.tour_idx.get()).copied().unwrap_or((0.0, 0.0))
+    /// Regler und Eingabefelder brauchen das Ziehen selbst, mit der Maus auch der Text.
+    fn card_child_drags(&self, g: &gtk::GestureDrag, x: f64, y: f64) -> bool {
+        let mouse = g.device().is_some_and(|d| !matches!(d.source(), gdk::InputSource::Pen | gdk::InputSource::Touchscreen));
+        let guide = self.guide.upcast_ref::<gtk::Widget>();
+        let mut at = self.guide.pick(x, y, gtk::PickFlags::DEFAULT);
+        while let Some(w) = at.filter(|w| w != guide) {
+            if w.is::<gtk::Scale>() || w.is::<gtk::Entry>() || w.is::<gtk::Text>() || (mouse && w.is::<gtk::TextView>()) {
+                return true;
+            }
+            at = w.parent();
+        }
+        false
+    }
+
+    fn step_offset(&self) -> Option<(f64, f64)> {
+        self.guide_offsets.borrow().get(self.tour_idx.get()).copied().flatten()
+    }
+
+    /// Freie Fläche für die Karte; die angeheftete Spalte bleibt frei.
+    fn guide_view(&self) -> (f64, f64) {
+        let side = if self.column.is_visible() { self.column.width() } else { 0 };
+        ((self.overlay.width() - side) as f64, self.overlay.height() as f64)
+    }
+
+    fn guide_size(&self) -> (f64, f64) {
+        (self.guide.width().max(310) as f64, self.guide.height().max(120) as f64)
+    }
+
+    fn guide_mark(&self) -> Option<Rect> {
+        let view = self.tour_view.borrow().clone()?;
+        let (page, area) = self.guide_anchor.get()?;
+        let r = view.canvas.page_rect_on_screen(page, area);
+        let pt = |x: f64, y: f64| view.canvas.compute_point(&self.overlay, &gtk::graphene::Point::new(x as f32, y as f32));
+        let (a, b) = (pt(r.x0, r.y0)?, pt(r.x1, r.y1)?);
+        Some(Rect::new(a.x() as f64, a.y() as f64, b.x() as f64, b.y() as f64))
+    }
+
+    /// Ganz aus dem Fenster kann die Karte nie.
+    fn clamp_card(&self, x: f64, y: f64) -> (f64, f64) {
+        let ((w, h), (cw, ch)) = (self.guide_view(), self.guide_size());
+        (x.clamp(8.0, (w - cw - 8.0).max(8.0)), y.clamp(8.0, (h - ch - 8.0).max(8.0)))
+    }
+
+    /// Gezogene Lage merken, als Abstand zur Stelle oder ohne Stelle zum Fenster.
+    fn drag_card_to(&self, x: f64, y: f64) {
+        let (x, y) = self.clamp_card(x, y);
+        let (ax, ay) = self.guide_mark().map_or((0.0, 0.0), |r| (r.x0, r.y0));
+        if let Some(o) = self.guide_offsets.borrow_mut().get_mut(self.tour_idx.get()) {
+            *o = Some((x - ax, y - ay));
+        }
     }
 
     /// Griff ziehen: Oberkante bleibt, die Unterkante folgt dem Stift.
@@ -2855,7 +2966,7 @@ impl ClaudePanel {
         if steps.is_empty() {
             return;
         }
-        self.guide_offsets.replace(vec![(0.0, 0.0); steps.len()]);
+        self.guide_offsets.replace(vec![None; steps.len()]);
         self.tour.replace(steps);
         self.tour_hints.replace(hints);
         self.guide_placed.set(false);
@@ -3217,25 +3328,28 @@ impl ClaudePanel {
         if std::env::var("GRAPHIT_PROFILE").is_ok() {
             eprintln!("PROFILE Schritt {} ({}): Zeichen bei {:?}", i + 1, step.target, view.canvas.guide_screen_rect());
         }
+        self.guide_side.set(None);
+        self.guide_anchor.set(view.canvas.guide_page_area());
         self.tour_view.replace(Some(view));
     }
 
     /// Lernkarte neben ihr Zeichen führen; läuft jedes Bild, damit sie beim Scrollen mitgeht.
     fn place_guide(&self) {
-        let Some(view) = self.tour_view.borrow().clone() else { return };
-        // die angeheftete Spalte bleibt frei
-        let side = if self.column.is_visible() { self.column.width() } else { 0 };
-        let (w, h) = ((self.overlay.width() - side) as f64, self.overlay.height() as f64);
-        let card = (self.guide.width().max(310) as f64, self.guide.height().max(120) as f64);
-        let mark = view.canvas.guide_screen_rect().and_then(|r| {
-            let pt = |x: f64, y: f64| view.canvas.compute_point(&self.overlay, &gtk::graphene::Point::new(x as f32, y as f32));
-            let (a, b) = (pt(r.x0, r.y0)?, pt(r.x1, r.y1)?);
-            Some(Rect::new(a.x() as f64, a.y() as f64, b.x() as f64, b.y() as f64))
-        });
-        let (x, y) = card_position(mark, card, (w, h), DOCK_SPACE as f64);
-        // gezogener Abstand gilt zur Stelle; ganz aus dem Fenster kann die Karte nicht
-        let (ox, oy) = self.step_offset();
-        let (x, y) = ((x + ox).clamp(8.0, (w - card.0 - 8.0).max(8.0)), (y + oy).clamp(8.0, (h - card.1 - 8.0).max(8.0)));
+        if self.tour_view.borrow().is_none() {
+            return;
+        }
+        let mark = self.guide_mark();
+        let (x, y) = match self.step_offset() {
+            Some((ox, oy)) => {
+                let (ax, ay) = mark.map_or((0.0, 0.0), |r| (r.x0, r.y0));
+                self.clamp_card(ax + ox, ay + oy)
+            }
+            None => {
+                let (at, side) = card_position_near(mark, self.guide_size(), self.guide_view(), DOCK_SPACE as f64, self.guide_side.get());
+                self.guide_side.set(side);
+                at
+            }
+        };
         let (cx, cy) = (self.guide.margin_start() as f64, self.guide.margin_top() as f64);
         let dragging = self.guide_drag.get().is_some();
         let glide = if self.guide_placed.replace(true) && !dragging { 0.22 } else { 1.0 };
@@ -3245,6 +3359,21 @@ impl ClaudePanel {
             self.guide.set_margin_top(ny.round() as i32);
         }
     }
+}
+
+/// Lage eines Zeigerereignisses in einem Widget.
+fn widget_point(widget: &impl IsA<gtk::Widget>, ev: &gdk::Event) -> Option<(f64, f64)> {
+    let (x, y) = ev.position()?;
+    let native = widget.as_ref().native()?;
+    let (sx, sy) = native.surface_transform();
+    let p = native.compute_point(widget, &gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32))?;
+    Some((p.x() as f64, p.y() as f64))
+}
+
+/// Lage des letzten Ereignisses einer Geste, unabhängig davon, ob ihr Widget gerade mitwandert.
+fn gesture_point(g: &gtk::GestureDrag, widget: &impl IsA<gtk::Widget>) -> Option<(f64, f64)> {
+    let sequence = g.last_updated_sequence();
+    widget_point(widget, &g.last_event(sequence.as_ref())?)
 }
 
 /// Handschrift des Schreibfelds zeichnen, in der aktuellen Farbe des Kontexts.
@@ -3366,6 +3495,9 @@ mod tests {
         let (card, view) = ((300.0, 120.0), (1000.0, 800.0));
         // rechts daneben
         assert_eq!(card_position(Some(Rect::new(100.0, 200.0, 300.0, 240.0)), card, view, 84.0), (328.0, 192.0));
+        // links gestartet bleibt sie links, obwohl rechts inzwischen Platz wäre
+        let (_, side) = card_position_near(Some(Rect::new(500.0, 200.0, 520.0, 240.0)), card, view, 84.0, Some(CardSide::Left));
+        assert_eq!(side, Some(CardSide::Left));
         // rechts kein Platz: links
         assert_eq!(card_position(Some(Rect::new(700.0, 200.0, 900.0, 240.0)), card, view, 84.0), (372.0, 192.0));
         // ganze Breite belegt: darunter

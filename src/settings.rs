@@ -123,6 +123,8 @@ pub struct Settings {
     pub claude_exams: String,
     /// Ordner der Altklausuren; leer: `Old_exams` im Notizordner
     pub exam_root: String,
+    /// Einmal am Tag bei GitHub nach einer neuen Version fragen
+    pub update_check: bool,
     /// Schwung: Gleitweite 0 (kurz) … 1 (sehr lang)
     pub kinetic_glide: f64,
     /// Schwung: Stärke (Faktor auf die Wischgeschwindigkeit)
@@ -182,6 +184,7 @@ impl Default for Settings {
             claude_col_w: 400,
             claude_exams: String::new(),
             exam_root: String::new(),
+            update_check: true,
             kinetic_glide: 0.5,
             kinetic_boost: 1.0,
             kinetic_axis_lock: true,
@@ -271,6 +274,7 @@ impl Settings {
                 "claude_col_w" => s.claude_col_w = f.unwrap_or(400.0) as i32,
                 "claude_exams" => s.claude_exams = v.into(),
                 "exam_root" => s.exam_root = v.into(),
+                "update_check" => s.update_check = b,
                 _ => {}
             }
         }
@@ -279,7 +283,7 @@ impl Settings {
 
     pub fn save(&self) {
         let text = format!(
-            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\n",
+            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\nupdate_check={}\n",
             self.pressure,
             self.pressure_curve,
             self.smoothing,
@@ -331,6 +335,7 @@ impl Settings {
             self.claude_col_w,
             self.claude_exams,
             self.exam_root,
+            self.update_check,
         );
         let p = path();
         if let Some(d) = p.parent() {
