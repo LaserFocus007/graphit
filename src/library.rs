@@ -97,13 +97,13 @@ impl Library {
         top.set_margin_end(18);
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.add_css_class("flat");
-        up.set_tooltip_text(Some("Übergeordneter Ordner"));
+        up.set_tooltip_text(Some(crate::i18n::tl("Übergeordneter Ordner")));
         top.append(&up);
         let crumbs = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         crumbs.set_hexpand(true);
         top.append(&crumbs);
         let search = gtk::SearchEntry::new();
-        search.set_placeholder_text(Some("In allen Notizen suchen"));
+        search.set_placeholder_text(Some(crate::i18n::tl("In allen Notizen suchen")));
         search.set_width_chars(28);
         top.append(&search);
         root.append(&top);
@@ -201,7 +201,7 @@ impl Library {
             self.crumbs.remove(&c);
         }
         let mut acc = self.base.clone();
-        let mut parts = vec![(self.base.clone(), "Bibliothek".to_string())];
+        let mut parts = vec![(self.base.clone(), crate::i18n::tl("Bibliothek").to_string())];
         if let Ok(rel) = cwd.strip_prefix(&self.base) {
             for c in rel.components() {
                 acc = acc.join(c);
@@ -236,7 +236,7 @@ impl Library {
                 .filter(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase().contains(&query)).unwrap_or(false))
                 .take(120)
                 .collect();
-            self.section(&format!("Suchergebnisse ({})", files.len()), &[], &files, true);
+            self.section(&crate::tr!("Suchergebnisse ({})", "Search results ({})", files.len()), &[], &files, true);
             return;
         }
         if cwd == self.base {
@@ -247,7 +247,7 @@ impl Library {
                 .take(8)
                 .collect();
             if !recent.is_empty() {
-                self.section("Zuletzt geöffnet", &[], &recent, true);
+                self.section(crate::i18n::tl("Zuletzt geöffnet"), &[], &recent, true);
             }
         }
         let mut dirs = Vec::new();
@@ -265,10 +265,10 @@ impl Library {
         dirs.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
         files.sort_by_key(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
         if !dirs.is_empty() {
-            self.section("Ordner", &dirs, &[], false);
+            self.section(crate::i18n::tl("Ordner"), &dirs, &[], false);
         }
         if !files.is_empty() {
-            self.section("Notizen", &[], &files, false);
+            self.section(crate::i18n::tl("Notizen"), &[], &files, false);
         }
         if dirs.is_empty() && files.is_empty() {
             let s = adw::StatusPage::builder().icon_name("folder-symbolic").title("Leerer Ordner").build();
@@ -312,7 +312,7 @@ impl Library {
         for d in dirs {
             let name = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let count = std::fs::read_dir(d).map(|r| r.flatten().filter(|e| is_doc(&e.path()) || visible_dir(&e.path())).count()).unwrap_or(0);
-            let card = self.card(&name, &format!("{count} Einträge"), None);
+            let card = self.card(&name, &crate::tr!("{count} Einträge", "{count} items"), None);
             let w = Rc::downgrade(self);
             let d = d.clone();
             card.connect_clicked(move |_| {

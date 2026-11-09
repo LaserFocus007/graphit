@@ -41,11 +41,11 @@ impl ButtonAction {
         [ButtonAction::Eraser, ButtonAction::Select, ButtonAction::Hand, ButtonAction::Radial, ButtonAction::Nothing];
     pub fn label(&self) -> &'static str {
         match self {
-            ButtonAction::Eraser => "Radierer",
-            ButtonAction::Select => "Auswahl (Lasso)",
-            ButtonAction::Hand => "Verschieben (Hand)",
-            ButtonAction::Radial => "Radialmenü",
-            ButtonAction::Nothing => "Nichts",
+            ButtonAction::Eraser => crate::i18n::tl("Radierer"),
+            ButtonAction::Select => crate::i18n::tl("Auswahl (Lasso)"),
+            ButtonAction::Hand => crate::i18n::tl("Verschieben (Hand)"),
+            ButtonAction::Radial => crate::i18n::tl("Radialmenü"),
+            ButtonAction::Nothing => crate::i18n::tl("Nichts"),
         }
     }
     fn key(&self) -> &'static str {
@@ -125,6 +125,8 @@ pub struct Settings {
     pub exam_root: String,
     /// Einmal am Tag bei GitHub nach einer neuen Version fragen
     pub update_check: bool,
+    /// Sprache der Oberfläche: "en" oder "de"
+    pub language: String,
     /// Schwung: Gleitweite 0 (kurz) … 1 (sehr lang)
     pub kinetic_glide: f64,
     /// Schwung: Stärke (Faktor auf die Wischgeschwindigkeit)
@@ -185,6 +187,7 @@ impl Default for Settings {
             claude_exams: String::new(),
             exam_root: String::new(),
             update_check: true,
+            language: "en".into(),
             kinetic_glide: 0.5,
             kinetic_boost: 1.0,
             kinetic_axis_lock: true,
@@ -275,6 +278,7 @@ impl Settings {
                 "claude_exams" => s.claude_exams = v.into(),
                 "exam_root" => s.exam_root = v.into(),
                 "update_check" => s.update_check = b,
+                "language" => s.language = v.into(),
                 _ => {}
             }
         }
@@ -283,7 +287,7 @@ impl Settings {
 
     pub fn save(&self) {
         let text = format!(
-            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\nupdate_check={}\n",
+            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\nupdate_check={}\nlanguage={}\n",
             self.pressure,
             self.pressure_curve,
             self.smoothing,
@@ -336,6 +340,7 @@ impl Settings {
             self.claude_exams,
             self.exam_root,
             self.update_check,
+            self.language,
         );
         let p = path();
         if let Some(d) = p.parent() {

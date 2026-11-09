@@ -19,15 +19,15 @@ pub enum Tool {
 impl Tool {
     pub fn label(&self) -> &'static str {
         match self {
-            Tool::Pen => "Stift",
-            Tool::Highlighter => "Marker",
-            Tool::Eraser => "Radierer",
-            Tool::Select => "Auswahl",
-            Tool::Shape => "Formen",
+            Tool::Pen => crate::i18n::tl("Stift"),
+            Tool::Highlighter => crate::i18n::tl("Marker"),
+            Tool::Eraser => crate::i18n::tl("Radierer"),
+            Tool::Select => crate::i18n::tl("Auswahl"),
+            Tool::Shape => crate::i18n::tl("Formen"),
             Tool::Text => "Text",
             Tool::Hand => "Hand",
-            Tool::Space => "Platz einfügen",
-            Tool::Ask => "Einkreisen und Claude fragen",
+            Tool::Space => crate::i18n::tl("Platz einfügen"),
+            Tool::Ask => crate::i18n::tl("Einkreisen und Claude fragen"),
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -79,12 +79,12 @@ impl ShapeKind {
         [ShapeKind::Line, ShapeKind::Arrow, ShapeKind::DoubleArrow, ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Axes];
     pub fn label(&self) -> &'static str {
         match self {
-            ShapeKind::Line => "Linie",
-            ShapeKind::Arrow => "Pfeil",
-            ShapeKind::DoubleArrow => "Doppelpfeil",
-            ShapeKind::Rect => "Rechteck",
+            ShapeKind::Line => crate::i18n::tl("Linie"),
+            ShapeKind::Arrow => crate::i18n::tl("Pfeil"),
+            ShapeKind::DoubleArrow => crate::i18n::tl("Doppelpfeil"),
+            ShapeKind::Rect => crate::i18n::tl("Rechteck"),
             ShapeKind::Ellipse => "Ellipse",
-            ShapeKind::Axes => "Koordinatensystem",
+            ShapeKind::Axes => crate::i18n::tl("Koordinatensystem"),
         }
     }
 }

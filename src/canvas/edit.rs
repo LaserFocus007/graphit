@@ -1598,10 +1598,10 @@ impl Canvas {
         let loader = gtk::gdk_pixbuf::PixbufLoader::new();
         loader.write(bytes).map_err(|e| e.to_string())?;
         loader.close().map_err(|e| e.to_string())?;
-        let pb = loader.pixbuf().ok_or("Bild kann nicht gelesen werden")?;
+        let pb = loader.pixbuf().ok_or(crate::i18n::tl("Bild kann nicht gelesen werden"))?;
         let png = pb.save_to_bufferv("png", &[]).map_err(|e| e.to_string())?;
         let data = base64::engine::general_purpose::STANDARD.encode(&png);
-        let page = self.st().doc.pages.get(page_idx).cloned().ok_or("Seite fehlt")?;
+        let page = self.st().doc.pages.get(page_idx).cloned().ok_or(crate::i18n::tl("Seite fehlt"))?;
         let (pw, ph) = {
             let p = page.borrow();
             (p.width, p.height)

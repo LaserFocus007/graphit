@@ -52,12 +52,13 @@ impl Sidebar {
         // Seite einfügen (mit Papierwahl)
         let add = gtk::MenuButton::new();
         add.set_icon_name("list-add-symbolic");
-        add.set_tooltip_text(Some("Seite einfügen"));
+        add.set_tooltip_text(Some(crate::i18n::tl("Seite einfügen")));
         add.add_css_class("flat");
         let pop = gtk::Popover::new();
         let bx = gtk::Box::new(gtk::Orientation::Vertical, 2);
         bx.add_css_class("fk-options");
-        for (label, style) in [("Wie aktuelle Seite", "")].into_iter().chain(PAPERS) {
+        for (label, style) in [(crate::i18n::tl("Wie aktuelle Seite"), "")].into_iter().chain(PAPERS) {
+            let label = crate::i18n::tl(label);
             let b = gtk::Button::with_label(label);
             b.add_css_class("flat");
             let w = Rc::downgrade(&sb);
@@ -91,19 +92,20 @@ impl Sidebar {
             });
             bar.append(&b);
         };
-        btn("fk-pages-symbolic", "Seite duplizieren", Box::new(|c, i| c.duplicate_page(i)));
-        btn("go-up-symbolic", "Nach oben", Box::new(|c, i| c.move_page(i, i.saturating_sub(1))));
-        btn("go-down-symbolic", "Nach unten", Box::new(|c, i| c.move_page(i, i + 1)));
-        btn("user-trash-symbolic", "Seite löschen", Box::new(|c, i| c.delete_page(i)));
+        btn("fk-pages-symbolic", crate::i18n::tl("Seite duplizieren"), Box::new(|c, i| c.duplicate_page(i)));
+        btn("go-up-symbolic", crate::i18n::tl("Nach oben"), Box::new(|c, i| c.move_page(i, i.saturating_sub(1))));
+        btn("go-down-symbolic", crate::i18n::tl("Nach unten"), Box::new(|c, i| c.move_page(i, i + 1)));
+        btn("user-trash-symbolic", crate::i18n::tl("Seite löschen"), Box::new(|c, i| c.delete_page(i)));
 
         // Papier der gewählten Seite ändern
         let paper = gtk::MenuButton::new();
         paper.set_icon_name("fk-shape-rect-symbolic");
-        paper.set_tooltip_text(Some("Papier dieser Seite"));
+        paper.set_tooltip_text(Some(crate::i18n::tl("Papier dieser Seite")));
         paper.add_css_class("flat");
         let menu = gio::Menu::new();
         let group = gio::SimpleActionGroup::new();
         for (label, style) in PAPERS {
+            let label = crate::i18n::tl(label);
             menu.append(Some(label), Some(&format!("sb.paper-{style}")));
             let a = gio::SimpleAction::new(&format!("paper-{style}"), None);
             let w = Rc::downgrade(&sb);

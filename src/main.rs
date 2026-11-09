@@ -5,6 +5,7 @@ mod docview;
 mod drive;
 mod geom;
 mod history;
+mod i18n;
 mod icons;
 mod index;
 mod latex;
@@ -36,6 +37,8 @@ use gtk::{gio, glib};
 const APP_ID: &str = "io.github.graphit";
 
 fn main() -> glib::ExitCode {
+    // GTKs eigene Texte folgen der gewählten Sprache; hier läuft noch kein zweiter Thread
+    unsafe { std::env::set_var("LANGUAGE", i18n::code()) };
     // Abstürze in ~/.cache/graphit/crash.log protokollieren
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

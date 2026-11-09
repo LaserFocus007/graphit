@@ -192,54 +192,55 @@ impl Win {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title));
         let home = gtk::Button::from_icon_name("go-home-symbolic");
-        home.set_tooltip_text(Some("Bibliothek"));
+        home.set_tooltip_text(Some(crate::i18n::tl("Bibliothek")));
         home.set_action_name(Some("win.library"));
         header.pack_start(&home);
         let sidebar_btn = gtk::ToggleButton::new();
         sidebar_btn.set_icon_name("sidebar-show-symbolic");
-        sidebar_btn.set_tooltip_text(Some("Seitenleiste (F9)"));
+        sidebar_btn.set_tooltip_text(Some(crate::i18n::tl("Seitenleiste (F9)")));
         header.pack_start(&sidebar_btn);
         let split_btn = gtk::ToggleButton::new();
         split_btn.set_icon_name("fk-split-symbolic");
-        split_btn.set_tooltip_text(Some("Zweites Dokument daneben lesen (F8)"));
+        split_btn.set_tooltip_text(Some(crate::i18n::tl("Zweites Dokument daneben lesen (F8)")));
         header.pack_start(&split_btn);
 
         let menu = gio::Menu::new();
         let s1 = gio::Menu::new();
-        s1.append(Some("Neues Dokument"), Some("win.new"));
-        s1.append(Some("Öffnen…"), Some("win.open"));
-        s1.append(Some("Speichern unter…"), Some("win.save-as"));
-        s1.append(Some("Als PDF exportieren…"), Some("win.export-pdf"));
-        s1.append(Some("Hintergrund-PDF wählen…"), Some("win.choose-pdf"));
-        s1.append(Some("Fixierte Objekte dieser Seite lösen"), Some("win.unlock-page"));
-        s1.append(Some("Claude fragen (Esc)"), Some("win.claude"));
+        s1.append(Some(crate::i18n::tl("Neues Dokument")), Some("win.new"));
+        s1.append(Some(crate::i18n::tl("Öffnen…")), Some("win.open"));
+        s1.append(Some(crate::i18n::tl("Speichern unter…")), Some("win.save-as"));
+        s1.append(Some(crate::i18n::tl("Als PDF exportieren…")), Some("win.export-pdf"));
+        s1.append(Some(crate::i18n::tl("Hintergrund-PDF wählen…")), Some("win.choose-pdf"));
+        s1.append(Some(crate::i18n::tl("Fixierte Objekte dieser Seite lösen")), Some("win.unlock-page"));
+        s1.append(Some(crate::i18n::tl("Claude fragen (Esc)")), Some("win.claude"));
         menu.append_section(None, &s1);
         let s2 = gio::Menu::new();
         let papers = gio::Menu::new();
         for (label, style) in crate::settings::PAPERS {
+            let label = crate::i18n::tl(label);
             papers.append(Some(label), Some(&format!("win.page-paper::{style}")));
         }
-        s2.append_submenu(Some("Papier dieser Seite"), &papers);
-        s2.append(Some("Seitenbreite"), Some("win.zoom-fit"));
-        s2.append(Some("Vollbild"), Some("win.fullscreen"));
+        s2.append_submenu(Some(crate::i18n::tl("Papier dieser Seite")), &papers);
+        s2.append(Some(crate::i18n::tl("Seitenbreite")), Some("win.zoom-fit"));
+        s2.append(Some(crate::i18n::tl("Vollbild")), Some("win.fullscreen"));
         menu.append_section(None, &s2);
         let s3 = gio::Menu::new();
-        s3.append(Some("Einstellungen"), Some("win.preferences"));
+        s3.append(Some(crate::i18n::tl("Einstellungen")), Some("win.preferences"));
         menu.append_section(None, &s3);
         let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).build();
         menu_btn.set_primary(true);
         header.pack_end(&menu_btn);
         let dark_btn = gtk::ToggleButton::new();
         dark_btn.set_icon_name("weather-clear-night-symbolic");
-        dark_btn.set_tooltip_text(Some("Dunkles Papier (Strg+Umschalt+D)"));
+        dark_btn.set_tooltip_text(Some(crate::i18n::tl("Dunkles Papier (Strg+Umschalt+D)")));
         dark_btn.set_action_name(Some("win.dark-paper"));
         header.pack_end(&dark_btn);
         let save_btn = gtk::Button::from_icon_name("document-save-symbolic");
-        save_btn.set_tooltip_text(Some("Speichern (Strg+S)"));
+        save_btn.set_tooltip_text(Some(crate::i18n::tl("Speichern (Strg+S)")));
         save_btn.set_action_name(Some("win.save"));
         header.pack_end(&save_btn);
         let open_btn = gtk::Button::from_icon_name("document-open-symbolic");
-        open_btn.set_tooltip_text(Some("Öffnen (Strg+O)"));
+        open_btn.set_tooltip_text(Some(crate::i18n::tl("Öffnen (Strg+O)")));
         open_btn.set_action_name(Some("win.open"));
         header.pack_end(&open_btn);
 
@@ -292,22 +293,22 @@ impl Win {
         let viewer_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let vbar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         vbar.add_css_class("fk-viewer-bar");
-        let viewer_title = gtk::Label::new(Some("Lese-Viewer"));
+        let viewer_title = gtk::Label::new(Some(crate::i18n::tl("Lese-Viewer")));
         viewer_title.set_hexpand(true);
         viewer_title.set_xalign(0.0);
         viewer_title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         viewer_title.add_css_class("heading");
         let vopen = gtk::Button::from_icon_name("document-open-symbolic");
         vopen.add_css_class("flat");
-        vopen.set_tooltip_text(Some("Dokument im Viewer öffnen"));
+        vopen.set_tooltip_text(Some(crate::i18n::tl("Dokument im Viewer öffnen")));
         vopen.set_action_name(Some("win.viewer-open"));
         let vclose = gtk::Button::from_icon_name("window-close-symbolic");
         vclose.add_css_class("flat");
-        vclose.set_tooltip_text(Some("Viewer schließen"));
+        vclose.set_tooltip_text(Some(crate::i18n::tl("Viewer schließen")));
         let viewer2_btn = gtk::ToggleButton::new();
         viewer2_btn.set_icon_name("fk-split-below-symbolic");
         viewer2_btn.add_css_class("flat");
-        viewer2_btn.set_tooltip_text(Some("Drittes Dokument unten lesen"));
+        viewer2_btn.set_tooltip_text(Some(crate::i18n::tl("Drittes Dokument unten lesen")));
         vbar.append(&gtk::Image::from_icon_name("x-office-document-symbolic"));
         vbar.append(&viewer_title);
         vbar.append(&viewer2_btn);
@@ -320,18 +321,18 @@ impl Win {
         let viewer2_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let vbar2 = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         vbar2.add_css_class("fk-viewer-bar");
-        let viewer2_title = gtk::Label::new(Some("Lese-Viewer"));
+        let viewer2_title = gtk::Label::new(Some(crate::i18n::tl("Lese-Viewer")));
         viewer2_title.set_hexpand(true);
         viewer2_title.set_xalign(0.0);
         viewer2_title.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         viewer2_title.add_css_class("heading");
         let vopen2 = gtk::Button::from_icon_name("document-open-symbolic");
         vopen2.add_css_class("flat");
-        vopen2.set_tooltip_text(Some("Dokument unten öffnen"));
+        vopen2.set_tooltip_text(Some(crate::i18n::tl("Dokument unten öffnen")));
         vopen2.set_action_name(Some("win.viewer2-open"));
         let vclose2 = gtk::Button::from_icon_name("window-close-symbolic");
         vclose2.add_css_class("flat");
-        vclose2.set_tooltip_text(Some("Unteren Viewer schließen"));
+        vclose2.set_tooltip_text(Some(crate::i18n::tl("Unteren Viewer schließen")));
         vbar2.append(&gtk::Image::from_icon_name("x-office-document-symbolic"));
         vbar2.append(&viewer2_title);
         vbar2.append(&vopen2);
@@ -653,8 +654,8 @@ impl Win {
             return;
         }
         let (name, _) = v.title();
-        let d = adw::AlertDialog::new(Some(&format!("„{name}“ speichern?")), Some("Ungespeicherte Änderungen gehen sonst verloren."));
-        d.add_responses(&[("cancel", "Abbrechen"), ("discard", "Verwerfen"), ("save", "Speichern")]);
+        let d = adw::AlertDialog::new(Some(&crate::tr!("„{name}“ speichern?", "Save “{name}”?")), Some(crate::i18n::tl("Ungespeicherte Änderungen gehen sonst verloren.")));
+        d.add_responses(&[("cancel", crate::i18n::tl("Abbrechen")), ("discard", crate::i18n::tl("Verwerfen")), ("save", crate::i18n::tl("Speichern"))]);
         d.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
         d.set_response_appearance("save", adw::ResponseAppearance::Suggested);
         d.set_default_response(Some("save"));
@@ -734,7 +735,7 @@ impl Win {
     }
 
     fn viewer_open_dialog(self: &Rc<Self>, slot: usize) {
-        let dialog = self.open_file_dialog(if slot == 0 { "Im Viewer öffnen" } else { "Unten im Viewer öffnen" });
+        let dialog = self.open_file_dialog(if slot == 0 { crate::i18n::tl("Im Viewer öffnen") } else { crate::i18n::tl("Unten im Viewer öffnen") });
         let w = self.clone();
         dialog.open(Some(&self.window), gio::Cancellable::NONE, move |res| {
             if let Ok(f) = res {
@@ -768,7 +769,7 @@ impl Win {
             Ok(mut doc) => {
                 // Viewer ist nur zum Lesen: gefundenes PDF nutzen, aber nichts speichern
                 if let (_, Some(m)) = crate::pdfsearch::repair(&mut doc) {
-                    self.toast(&format!("Hintergrund-PDF „{}“ nicht gefunden", file_name(&m)));
+                    self.toast(&crate::tr!("Hintergrund-PDF „{}“ nicht gefunden", "Background PDF “{}” not found", file_name(&m)));
                 }
                 let v = self.ensure_viewer(slot);
                 // Leseposition des bisher angezeigten Dokuments sichern
@@ -778,7 +779,7 @@ impl Win {
                 title.set_text(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                 self.remember_viewers();
             }
-            Err(e) => self.toast(&format!("Öffnen fehlgeschlagen: {e}")),
+            Err(e) => self.toast(&crate::tr!("Öffnen fehlgeschlagen: {e}", "Opening failed: {e}")),
         }
     }
 
@@ -907,13 +908,13 @@ impl Win {
         // Einfügen aus der Zwischenablage (Bilder, Text, kopierte Striche)
         let paste = gtk::Button::from_icon_name("edit-paste-symbolic");
         paste.add_css_class("flat");
-        paste.set_tooltip_text(Some("Einfügen (Strg+V)"));
+        paste.set_tooltip_text(Some(crate::i18n::tl("Einfügen (Strg+V)")));
         paste.set_action_name(Some("win.paste"));
         self.dock.append(&paste);
         let claude = gtk::Button::from_icon_name("fk-spark-symbolic");
         claude.add_css_class("flat");
         claude.add_css_class("fk-claude-spark");
-        claude.set_tooltip_text(Some("Claude fragen (Esc)"));
+        claude.set_tooltip_text(Some(crate::i18n::tl("Claude fragen (Esc)")));
         let w = Rc::downgrade(self);
         claude.connect_clicked(move |_| {
             if let Some(w) = w.upgrade() {
@@ -927,7 +928,7 @@ impl Win {
             let b = gtk::Button::new();
             b.add_css_class("flat");
             b.add_css_class("fk-color");
-            b.set_tooltip_text(Some(COLOR_NAMES[i]));
+            b.set_tooltip_text(Some(crate::i18n::tl(COLOR_NAMES[i])));
             let sw = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             sw.add_css_class("fk-swatch");
             sw.add_css_class(&format!("fk-c{i}"));
@@ -945,7 +946,7 @@ impl Win {
         }
         let more = gtk::MenuButton::new();
         more.set_icon_name("color-select-symbolic");
-        more.set_tooltip_text(Some("Weitere Farben"));
+        more.set_tooltip_text(Some(crate::i18n::tl("Weitere Farben")));
         more.add_css_class("flat");
         more.set_direction(gtk::ArrowType::Up);
         let pop = gtk::Popover::new();
@@ -953,7 +954,7 @@ impl Win {
         for (i, _) in PALETTE.iter().enumerate() {
             let b = gtk::Button::new();
             b.add_css_class("flat");
-            b.set_tooltip_text(Some(COLOR_NAMES[i]));
+            b.set_tooltip_text(Some(crate::i18n::tl(COLOR_NAMES[i])));
             let sw = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             sw.add_css_class("fk-swatch");
             sw.add_css_class(&format!("fk-c{i}"));
@@ -985,7 +986,7 @@ impl Win {
             let b = gtk::Button::new();
             b.add_css_class("flat");
             b.add_css_class("fk-width");
-            b.set_tooltip_text(Some(["Sehr fein", "Fein", "Mittel", "Dick"][i]));
+            b.set_tooltip_text(Some([crate::i18n::tl("Sehr fein"), crate::i18n::tl("Fein"), crate::i18n::tl("Mittel"), crate::i18n::tl("Dick")][i]));
             let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             dot.add_css_class("fk-dot");
             dot.set_size_request(d, d);
@@ -1004,8 +1005,8 @@ impl Win {
         }
         self.dock.append(&gtk::Separator::new(gtk::Orientation::Vertical));
         for (icon, action, tip) in [
-            ("edit-undo-symbolic", "win.undo", "Rückgängig (Strg+Z)"),
-            ("edit-redo-symbolic", "win.redo", "Wiederholen (Strg+Y)"),
+            ("edit-undo-symbolic", "win.undo", crate::i18n::tl("Rückgängig (Strg+Z)")),
+            ("edit-redo-symbolic", "win.redo", crate::i18n::tl("Wiederholen (Strg+Y)")),
         ] {
             let b = gtk::Button::from_icon_name(icon);
             b.add_css_class("flat");
@@ -1043,8 +1044,8 @@ impl Win {
             Tool::Pen => {
                 let cfg = self.canvas().st().cfg.clone();
                 for (label, active, f) in [
-                    ("Druckempfindlich", cfg.pressure, (|c: &mut crate::settings::Settings, v| c.pressure = v) as fn(&mut crate::settings::Settings, bool)),
-                    ("Halten zum Begradigen", cfg.hold_to_straighten, |c, v| c.hold_to_straighten = v),
+                    (crate::i18n::tl("Druckempfindlich"), cfg.pressure, (|c: &mut crate::settings::Settings, v| c.pressure = v) as fn(&mut crate::settings::Settings, bool)),
+                    (crate::i18n::tl("Halten zum Begradigen"), cfg.hold_to_straighten, |c, v| c.hold_to_straighten = v),
                 ] {
                     let c = gtk::CheckButton::with_label(label);
                     c.set_active(active);
@@ -1059,7 +1060,7 @@ impl Win {
                     bx.append(&c);
                 }
                 bx.append(&self.auto_shapes_check());
-                let more = gtk::Button::with_label("Alle Stift-Einstellungen…");
+                let more = gtk::Button::with_label(crate::i18n::tl("Alle Stift-Einstellungen…"));
                 more.add_css_class("flat");
                 more.set_action_name(Some("win.preferences"));
                 bx.append(&more);
@@ -1089,8 +1090,8 @@ impl Win {
                 bx.append(&row);
             }
             Tool::Highlighter => {
-                let c = gtk::CheckButton::with_label("An PDF-Text ausrichten");
-                c.set_tooltip_text(Some("Über PDF-Text markiert der Marker exakt die Textzeilen – wie in einem PDF-Reader."));
+                let c = gtk::CheckButton::with_label(crate::i18n::tl("An PDF-Text ausrichten"));
+                c.set_tooltip_text(Some(crate::i18n::tl("Über PDF-Text markiert der Marker exakt die Textzeilen – wie in einem PDF-Reader.")));
                 c.set_active(tools.hl_snap);
                 let w = Rc::downgrade(self);
                 c.connect_toggled(move |c| {
@@ -1101,8 +1102,8 @@ impl Win {
                 bx.append(&c);
             }
             Tool::Eraser => {
-                let a = gtk::CheckButton::with_label("Teile von Strichen radieren");
-                let b = gtk::CheckButton::with_label("Ganze Striche löschen");
+                let a = gtk::CheckButton::with_label(crate::i18n::tl("Teile von Strichen radieren"));
+                let b = gtk::CheckButton::with_label(crate::i18n::tl("Ganze Striche löschen"));
                 b.set_group(Some(&a));
                 a.set_active(tools.eraser_mode == EraserMode::Standard);
                 b.set_active(tools.eraser_mode == EraserMode::Stroke);
@@ -1117,7 +1118,7 @@ impl Win {
             }
             Tool::Select => {
                 let mut first: Option<gtk::CheckButton> = None;
-                for (label, mode) in [("Lasso (frei umranden)", SelectMode::Lasso), ("Rechteck", SelectMode::Rect)] {
+                for (label, mode) in [(crate::i18n::tl("Lasso (frei umranden)"), SelectMode::Lasso), (crate::i18n::tl("Rechteck"), SelectMode::Rect)] {
                     let c = gtk::CheckButton::with_label(label);
                     if let Some(f) = &first { c.set_group(Some(f)) } else { first = Some(c.clone()) }
                     c.set_active(tools.select_mode == mode);
@@ -1131,7 +1132,7 @@ impl Win {
                     });
                     bx.append(&c);
                 }
-                let l = gtk::Label::new(Some("Tippen wählt ein einzelnes Objekt.\nStifttaste 2 wählt immer per Lasso."));
+                let l = gtk::Label::new(Some(crate::i18n::tl("Tippen wählt ein einzelnes Objekt.\nStifttaste 2 wählt immer per Lasso.")));
                 l.add_css_class("dim-label");
                 l.add_css_class("caption");
                 bx.append(&l);
@@ -1158,7 +1159,7 @@ impl Win {
                     grid.attach(&b, (i % 3) as i32, (i / 3) as i32, 1, 1);
                 }
                 bx.append(&grid);
-                let fill = gtk::CheckButton::with_label("Gefüllt");
+                let fill = gtk::CheckButton::with_label(crate::i18n::tl("Gefüllt"));
                 fill.set_active(tools.pen.fill);
                 let w = Rc::downgrade(self);
                 fill.connect_toggled(move |c| {
@@ -1171,7 +1172,7 @@ impl Win {
             }
             Tool::Text => {
                 let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-                row.append(&gtk::Label::new(Some("Größe")));
+                row.append(&gtk::Label::new(Some(crate::i18n::tl("Größe"))));
                 let spin = gtk::SpinButton::with_range(6.0, 72.0, 1.0);
                 spin.set_value(tools.text_size);
                 let w = Rc::downgrade(self);
@@ -1205,8 +1206,8 @@ impl Win {
     }
 
     fn auto_shapes_check(self: &Rc<Self>) -> gtk::CheckButton {
-        let c = gtk::CheckButton::with_label("Formen beim Absetzen erkennen");
-        c.set_tooltip_text(Some("Kreise, Rechtecke, Dreiecke und Linien werden automatisch sauber.\nUnabhängig davon: Stift kurz still halten erkennt die Form immer."));
+        let c = gtk::CheckButton::with_label(crate::i18n::tl("Formen beim Absetzen erkennen"));
+        c.set_tooltip_text(Some(crate::i18n::tl("Kreise, Rechtecke, Dreiecke und Linien werden automatisch sauber.\nUnabhängig davon: Stift kurz still halten erkennt die Form immer.")));
         c.set_active(self.canvas().st().cfg.auto_shapes);
         let w = Rc::downgrade(self);
         c.connect_toggled(move |c| {
@@ -1235,7 +1236,7 @@ impl Win {
     pub fn refresh(&self) {
         if self.stack.visible_child_name().as_deref() == Some("library") && self.current.borrow().is_none() {
             self.title.set_title("Graphit");
-            self.title.set_subtitle("Bibliothek");
+            self.title.set_subtitle(crate::i18n::tl("Bibliothek"));
             return;
         }
         let Some(v) = self.view() else {
@@ -1249,7 +1250,7 @@ impl Win {
         self.title.set_title(&format!("{}{}", if dirty { "• " } else { "" }, name));
         let n = st.doc.pages.len();
         let cur = st.current_page() + 1;
-        self.title.set_subtitle(&format!("Seite {cur} von {n} · {:.0} %", st.zoom / ZOOM_100 * 100.0));
+        self.title.set_subtitle(&crate::tr!("Seite {cur} von {n} · {:.0} %", "Page {cur} of {n} · {:.0} %", st.zoom / ZOOM_100 * 100.0));
         let tool = st.tools.tool;
         let level = st.tools.width_level();
         let color = match tool {
@@ -1326,9 +1327,9 @@ impl Win {
             Box::new(|w| {
                 let n = w.canvas().unlock_page();
                 w.toast(&match n {
-                    0 => "Auf dieser Seite ist nichts fixiert".to_string(),
-                    1 => "1 Objekt wieder auswählbar".to_string(),
-                    n => format!("{n} Objekte wieder auswählbar"),
+                    0 => crate::i18n::tl("Auf dieser Seite ist nichts fixiert").to_string(),
+                    1 => crate::i18n::tl("1 Objekt wieder auswählbar").to_string(),
+                    n => crate::tr!("{n} Objekte wieder auswählbar", "{n} objects can be selected again"),
                 });
             }),
         );
@@ -1503,7 +1504,7 @@ impl Win {
 
     /// Hinweis auf eine neue Version mit Knopf zur Download-Seite.
     pub fn offer_update(&self, version: &str, url: &str) {
-        let toast = adw::Toast::builder().title(format!("Graphit {version} ist verfügbar")).button_label("Ansehen").timeout(12).build();
+        let toast = adw::Toast::builder().title(crate::tr!("Graphit {version} ist verfügbar", "Graphit {version} is available")).button_label(crate::i18n::tl("Ansehen")).timeout(12).build();
         let (window, url) = (self.window.clone(), url.to_string());
         toast.connect_button_clicked(move |_| {
             gtk::UriLauncher::new(&url).launch(Some(&window), gio::Cancellable::NONE, |_| {});
@@ -1517,7 +1518,7 @@ impl Win {
     /// Datei von einem Online-Konto: lokale Kopie laden, danach wie eine normale Datei.
     fn with_remote(self: &Rc<Self>, file: gio::File, then: impl FnOnce(&Rc<Self>, &Path) + 'static) {
         // bleibt, bis die Datei da ist; Meldungen stünden sonst dahinter in der Schlange
-        let loading = adw::Toast::builder().title("Lädt die Datei …").timeout(0).build();
+        let loading = adw::Toast::builder().title(crate::i18n::tl("Lädt die Datei …")).timeout(0).build();
         self.toasts.add_toast(loading.clone());
         let (w, uri) = (self.clone(), file.uri().to_string());
         glib::spawn_future_local(async move {
@@ -1527,14 +1528,14 @@ impl Win {
                 Ok(Ok(crate::drive::Remote::File { path, note, stale })) => {
                     then(&w, &path);
                     if stale {
-                        w.toast("Das Original ist neuer: Graphit zeigt die vorhandene lokale Kopie");
+                        w.toast(crate::i18n::tl("Das Original ist neuer: Graphit zeigt die vorhandene lokale Kopie"));
                     } else if note {
-                        w.toast("Lokale Kopie: Änderungen gehen nicht ins Original zurück");
+                        w.toast(crate::i18n::tl("Lokale Kopie: Änderungen gehen nicht ins Original zurück"));
                     }
                 }
                 Ok(Ok(crate::drive::Remote::Folder)) => w.open_dialog_in(Some(file)),
                 Ok(Err(e)) => w.toast(&e),
-                Err(_) => w.toast("Laden fehlgeschlagen"),
+                Err(_) => w.toast(crate::i18n::tl("Laden fehlgeschlagen")),
             }
         });
     }
@@ -1576,15 +1577,15 @@ impl Win {
                 if let Some(f) = found {
                     // neuen Pfad gleich in die .xopp schreiben
                     self.save_now(&v);
-                    self.pdf_toast(&format!("Hintergrund-PDF gefunden: {}", file_name(&f)), "Anderes wählen…");
+                    self.pdf_toast(&crate::tr!("Hintergrund-PDF gefunden: {}", "Background PDF found: {}", file_name(&f)), crate::i18n::tl("Anderes wählen…"));
                 }
                 if let Some(m) = missing {
-                    self.pdf_toast(&format!("Hintergrund-PDF „{}“ nicht gefunden", file_name(&m)), "PDF wählen…");
+                    self.pdf_toast(&crate::tr!("Hintergrund-PDF „{}“ nicht gefunden", "Background PDF “{}” not found", file_name(&m)), crate::i18n::tl("PDF wählen…"));
                 }
                 crate::recent::add(path);
                 self.apply_tab_viewers();
             }
-            Err(e) => self.toast(&format!("Öffnen fehlgeschlagen: {e}")),
+            Err(e) => self.toast(&crate::tr!("Öffnen fehlgeschlagen: {e}", "Opening failed: {e}")),
         }
     }
 
@@ -1601,7 +1602,7 @@ impl Win {
             (crate::pdfsearch::pages_needed(&st.doc), st.doc.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())))
         };
         if needed == 0 {
-            self.toast("Diese Notiz hat keinen PDF-Hintergrund");
+            self.toast(crate::i18n::tl("Diese Notiz hat keinen PDF-Hintergrund"));
             return;
         }
         let filter = gtk::FileFilter::new();
@@ -1610,7 +1611,7 @@ impl Win {
         filter.add_pattern("*.PDF");
         let filters = gio::ListStore::new::<gtk::FileFilter>();
         filters.append(&filter);
-        let dialog = gtk::FileDialog::builder().title("Hintergrund-PDF wählen").filters(&filters).modal(true).build();
+        let dialog = gtk::FileDialog::builder().title(crate::i18n::tl("Hintergrund-PDF wählen")).filters(&filters).modal(true).build();
         if let Some(d) = dir.or_else(|| self.current_dir()) {
             dialog.set_initial_folder(Some(&gio::File::for_path(d)));
         }
@@ -1619,22 +1620,22 @@ impl Win {
             let Some(p) = res.ok().and_then(|f| f.path()) else { return };
             let n = render::pdf_page_sizes(&p).map(|s| s.len()).unwrap_or(0);
             if n == 0 {
-                w.toast("Keine lesbare PDF-Datei");
+                w.toast(crate::i18n::tl("Keine lesbare PDF-Datei"));
                 return;
             }
             v.canvas.set_pdf_path(p.clone());
             w.save_now(&v);
             if n < needed {
-                w.toast(&format!("{} hat nur {n} Seiten, die Notiz nutzt {needed}", file_name(&p)));
+                w.toast(&crate::tr!("{} hat nur {n} Seiten, die Notiz nutzt {needed}", "{} has only {n} pages, the note uses {needed}", file_name(&p)));
             } else {
-                w.toast(&format!("Hintergrund-PDF: {}", file_name(&p)));
+                w.toast(&crate::tr!("Hintergrund-PDF: {}", "Background PDF: {}", file_name(&p)));
             }
         });
     }
 
     fn open_file_dialog(&self, title: &str) -> gtk::FileDialog {
         let filter = gtk::FileFilter::new();
-        filter.set_name(Some("Notizen und PDFs"));
+        filter.set_name(Some(crate::i18n::tl("Notizen und PDFs")));
         filter.add_pattern("*.xopp");
         filter.add_pattern("*.xoj");
         filter.add_pattern("*.pdf");
@@ -1655,7 +1656,7 @@ impl Win {
     }
 
     fn open_dialog_in(self: &Rc<Self>, folder: Option<gio::File>) {
-        let dialog = self.open_file_dialog("Öffnen");
+        let dialog = self.open_file_dialog(crate::i18n::tl("Öffnen"));
         if let Some(f) = folder {
             dialog.set_initial_folder(Some(&f));
         }
@@ -1692,9 +1693,9 @@ impl Win {
                         .as_ref()
                         .map(|p| p.with_extension("xopp"))
                         .or_else(|| st.doc.path.clone())
-                        .unwrap_or_else(|| PathBuf::from("Notiz.xopp"))
+                        .unwrap_or_else(|| PathBuf::from(crate::i18n::tl("Notiz.xopp")))
                 };
-                let dialog = gtk::FileDialog::builder().title("Speichern unter").modal(true).build();
+                let dialog = gtk::FileDialog::builder().title(crate::i18n::tl("Speichern unter")).modal(true).build();
                 if let Some(name) = suggestion.file_name() {
                     dialog.set_initial_name(Some(&name.to_string_lossy()));
                 }
@@ -1738,10 +1739,10 @@ impl Win {
                     crate::recent::add(&path);
                     remove_autosave(&path);
                     v.canvas.changed();
-                    w.toast("Gespeichert");
+                    w.toast(crate::i18n::tl("Gespeichert"));
                 }
-                Ok(Err(e)) => w.toast(&format!("Speichern fehlgeschlagen: {e}")),
-                Err(_) => w.toast("Speichern fehlgeschlagen"),
+                Ok(Err(e)) => w.toast(&crate::tr!("Speichern fehlgeschlagen: {e}", "Saving failed: {e}")),
+                Err(_) => w.toast(crate::i18n::tl("Speichern fehlgeschlagen")),
             }
         });
     }
@@ -1816,7 +1817,7 @@ impl Win {
                 true
             }
             Err(e) => {
-                self.toast(&format!("Speichern fehlgeschlagen: {e}"));
+                self.toast(&crate::tr!("Speichern fehlgeschlagen: {e}", "Saving failed: {e}"));
                 false
             }
         }
@@ -1832,7 +1833,7 @@ impl Win {
             let stem = base.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Export".into());
             (pages, base.with_file_name(format!("{stem}_annotated.pdf")))
         };
-        let dialog = gtk::FileDialog::builder().title("Als PDF exportieren").modal(true).build();
+        let dialog = gtk::FileDialog::builder().title(crate::i18n::tl("Als PDF exportieren")).modal(true).build();
         if let Some(n) = suggestion.file_name() {
             dialog.set_initial_name(Some(&n.to_string_lossy()));
         }
@@ -1847,14 +1848,14 @@ impl Win {
             glib::spawn_future_local(async move {
                 let src_pdf = pages.iter().find_map(|p| p.pdf.clone());
                 if src_pdf.as_deref() == Some(path.as_path()) {
-                    w.toast("Das Original-PDF kann nicht überschrieben werden");
+                    w.toast(crate::i18n::tl("Das Original-PDF kann nicht überschrieben werden"));
                     return;
                 }
                 let res = gio::spawn_blocking(move || export_pages(&pages, &path)).await;
                 match res {
-                    Ok(Ok(())) => w.toast("PDF exportiert"),
-                    Ok(Err(e)) => w.toast(&format!("Export fehlgeschlagen: {e}")),
-                    Err(_) => w.toast("Export fehlgeschlagen"),
+                    Ok(Ok(())) => w.toast(crate::i18n::tl("PDF exportiert")),
+                    Ok(Err(e)) => w.toast(&crate::tr!("Export fehlgeschlagen: {e}", "Export failed: {e}")),
+                    Err(_) => w.toast(crate::i18n::tl("Export fehlgeschlagen")),
                 }
             });
         });
@@ -1876,10 +1877,10 @@ impl Win {
         self.stack.set_visible_child_name("editor");
         let n = dirty.len();
         let d = adw::AlertDialog::new(
-            Some("Änderungen speichern?"),
-            Some(&if n == 1 { "Ein Dokument hat ungespeicherte Änderungen.".to_string() } else { format!("{n} Dokumente haben ungespeicherte Änderungen.") }),
+            Some(crate::i18n::tl("Änderungen speichern?")),
+            Some(&if n == 1 { crate::i18n::tl("Ein Dokument hat ungespeicherte Änderungen.").to_string() } else { crate::tr!("{n} Dokumente haben ungespeicherte Änderungen.", "{n} documents have unsaved changes.") }),
         );
-        d.add_responses(&[("cancel", "Abbrechen"), ("discard", "Alle verwerfen"), ("save", "Speichern")]);
+        d.add_responses(&[("cancel", crate::i18n::tl("Abbrechen")), ("discard", crate::i18n::tl("Alle verwerfen")), ("save", crate::i18n::tl("Speichern"))]);
         d.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
         d.set_response_appearance("save", adw::ResponseAppearance::Suggested);
         let w = self.clone();
@@ -1928,7 +1929,7 @@ pub fn autosave_path(doc: Option<&Path>) -> PathBuf {
     let name = doc
         .and_then(|p| p.file_stem())
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Unbenannt".into());
+        .unwrap_or_else(|| crate::i18n::tl("Unbenannt").into());
     let hash = doc.map(|p| {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1948,7 +1949,7 @@ fn remove_autosave(doc: &Path) {
 
 /// Vektor-Export: PDF-Hintergründe werden über Poppler als Vektoren übernommen.
 pub fn export_pages(pages: &[std::sync::Arc<crate::model::PageData>], path: &Path) -> Result<(), String> {
-    let first = pages.first().ok_or("leeres Dokument")?;
+    let first = pages.first().ok_or(crate::i18n::tl("leeres Dokument"))?;
     let tmp = path.with_extension("pdf.graphit-tmp");
     {
         let surf = cairo::PdfSurface::new(first.width, first.height, &tmp).map_err(|e| e.to_string())?;

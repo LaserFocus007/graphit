@@ -594,7 +594,7 @@ pub fn forget_pdf(path: &Path) {
 pub fn pdf_page_sizes(path: &Path) -> Result<Vec<(f64, f64)>, String> {
     forget_pdf(path);
     with_pdf(path, |d| (0..d.n_pages()).filter_map(|i| d.page(i)).map(|p| p.size()).collect())
-        .ok_or_else(|| format!("PDF kann nicht geöffnet werden: {}", path.display()))
+        .ok_or_else(|| crate::tr!("PDF kann nicht geöffnet werden: {}", "PDF cannot be opened: {}", path.display()))
 }
 
 pub fn draw_pdf_page(cr: &Context, path: &Path, idx: usize, printing: bool) -> bool {

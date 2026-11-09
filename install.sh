@@ -12,7 +12,8 @@ install -m 644 data/io.github.graphit.svg "$ICONS/scalable/apps/io.github.graphi
 cat > "$APPS/io.github.graphit.desktop" <<DESK
 [Desktop Entry]
 Name=Graphit
-Comment=Handschriftliche Notizen und PDF-Annotation (kompatibel mit Xournal++)
+Comment=Handwritten notes and PDF annotation (compatible with Xournal++)
+Comment[de]=Handschriftliche Notizen und PDF-Annotation (kompatibel mit Xournal++)
 Exec=$HOME/.local/bin/graphit %F
 Icon=io.github.graphit
 Terminal=false
@@ -23,4 +24,4 @@ StartupWMClass=io.github.graphit
 DESK
 update-desktop-database "$APPS" 2>/dev/null || true
 gtk-update-icon-cache -q -t "$ICONS" 2>/dev/null || true
-echo "Graphit installiert: $HOME/.local/bin/graphit"
+echo "Graphit installed: $HOME/.local/bin/graphit"

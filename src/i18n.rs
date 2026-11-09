@@ -1,0 +1,427 @@
+//! Interface language. The code is written with German source texts; English is the default
+//! for users. `tl` looks up plain texts, `tr!` selects between two compile-checked format strings.
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+static ENGLISH: OnceLock<bool> = OnceLock::new();
+static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+
+pub fn english() -> bool {
+    // Tests prüfen die deutschen Quelltexte, unabhängig von der Einstellung des Rechners
+    *ENGLISH.get_or_init(|| !cfg!(test) && crate::settings::Settings::load().language != "de")
+}
+
+/// Code for the `LANGUAGE` variable, so that GTK's own texts follow the setting.
+pub fn code() -> &'static str {
+    if english() { "en" } else { "de" }
+}
+
+/// Text of the current language for a German source text.
+pub fn tl(de: &'static str) -> &'static str {
+    if !english() {
+        return de;
+    }
+    TABLE.get_or_init(|| EN.iter().copied().collect()).get(de).copied().unwrap_or(de)
+}
+
+/// Selects a word for the current language.
+pub fn pick(de: &'static str, en: &'static str) -> &'static str {
+    if english() { en } else { de }
+}
+
+/// `format!` in the current language: German first, then English, then the arguments.
+#[macro_export]
+macro_rules! tr {
+    ($de:literal, $en:literal $(, $arg:expr)* $(,)?) => {
+        if $crate::i18n::english() { format!($en $(, $arg)*) } else { format!($de $(, $arg)*) }
+    };
+}
+
+static EN: &[(&str, &str)] = &[
+    ("Papier", "Paper"),
+    ("KI", "AI"),
+    ("Bild kann nicht gelesen werden", "The image cannot be read"),
+    ("Seite fehlt", "The page is missing"),
+    ("Allgemein", "General"),
+    ("Gilt nach einem Neustart von Graphit", "Applies after restarting Graphit"),
+    ("**Nicht ganz.**", "**Not quite.**"),
+    ("**Richtig.**", "**Correct.**"),
+    ("1 Bild", "1 image"),
+    ("1 Objekt wieder auswählbar", "1 object can be selected again"),
+    ("1/2 – Schreib ein paar Wörter so leicht, wie du beim zügigen Mitschreiben schreibst.", "1/2 – Write a few words as lightly as you do when taking notes quickly."),
+    ("2/2 – Jetzt ein paar Striche richtig fest, so wie du dicke Linien ziehen würdest.", "2/2 – Now make a few firm strokes, the way you would draw thick lines."),
+    ("Abbrechen", "Cancel"),
+    ("Abfragen", "Quiz me"),
+    ("Abgebrochen", "Cancelled"),
+    ("Alle Notizen", "All notes"),
+    ("Alle Stift-Einstellungen…", "All pen settings…"),
+    ("Alle verwerfen", "Discard all"),
+    ("Als PDF exportieren", "Export as PDF"),
+    ("Als PDF exportieren…", "Export as PDF…"),
+    ("Als Spalte rechts anheften", "Pin as a column on the right"),
+    ("Altklausuren", "Past exams"),
+    ("Altklausuren (optional)", "Past exams (optional)"),
+    ("Altklausuren je Modul", "Past exams per course"),
+    ("An PDF-Text ausrichten", "Snap to PDF text"),
+    ("Anderes wählen…", "Choose another…"),
+    ("Angehalten", "Stopped"),
+    ("Anhalten", "Stop"),
+    ("Ansehen", "View"),
+    ("Auch per langem Druck öffnen", "Also open with a long press"),
+    ("Auch über den Mond-Knopf oben rechts oder Strg+Umschalt+D", "Also available with the moon button at the top right or Ctrl+Shift+D"),
+    ("Auf dieser Seite ist nichts fixiert", "Nothing is locked on this page"),
+    ("Aus", "Off"),
+    ("Ausschneiden (Strg+X)", "Cut (Ctrl+X)"),
+    ("Auswahl", "Selection"),
+    ("Auswahl (Lasso)", "Selection (lasso)"),
+    ("Auswerten", "Evaluate"),
+    ("Beim Schreiben selbst ist der Cursor immer ausgeblendet", "The cursor is always hidden while writing"),
+    ("Beim Wischen nach oben oder unten driftet die Seite nicht seitlich weg", "When swiping up or down, the page does not drift sideways"),
+    ("Beim Öffnen über Stern oder Menü, nicht bei Esc", "When opened with the star or the menu, not with Esc"),
+    ("Beruhigt Zittern bei langsamer Bewegung; schnelle Schrift bleibt unverändert", "Calms jitter during slow movement; fast writing stays unchanged"),
+    ("Bibliothek", "Library"),
+    ("Bild anhängen", "Attach image"),
+    ("Bild anhängen (auch Strg+V oder hineinziehen)", "Attach image (also Ctrl+V or drag and drop)"),
+    ("Bild entfernen", "Remove image"),
+    ("Bildschirmtastatur automatisch öffnen", "Open the on-screen keyboard automatically"),
+    ("Bisheriges Gespräch dieses Moduls", "Previous conversation for this course"),
+    ("Blanko", "Blank"),
+    ("Blau", "Blue"),
+    ("Braun", "Brown"),
+    ("Claude dazu fragen: die Auswahl geht als Bild mit", "Ask Claude about this: the selection is sent as an image"),
+    ("Claude denkt nach …", "Claude is thinking …"),
+    ("Claude durchsucht diese Ordner mit. Vorgeschlagen aus den Ordnernamen.", "Claude also searches these folders. Suggested from the folder names."),
+    ("Claude fragen (Esc)", "Ask Claude (Esc)"),
+    ("Claude schreibt …", "Claude is writing …"),
+    ("Cursor beim Schweben", "Cursor while hovering"),
+    ("Damit startet der Dialog; dort lässt es sich jederzeit wechseln", "The dialog starts with this model; you can change it there at any time"),
+    ("Darstellung", "Appearance"),
+    ("Das Original ist neuer: Graphit zeigt die vorhandene lokale Kopie", "The original is newer: Graphit is showing the existing local copy"),
+    ("Das Original-PDF kann nicht überschrieben werden", "The original PDF cannot be overwritten"),
+    ("Dauer", "Duration"),
+    ("Deine Ordner", "Your folders"),
+    ("Dick", "Thick"),
+    ("Diese Notiz hat keinen PDF-Hintergrund", "This note has no PDF background"),
+    ("Diese Seite erklären", "Explain this page"),
+    ("Dokument im Viewer öffnen", "Open document in the reader"),
+    ("Dokument unten öffnen", "Open document below"),
+    ("Doppelpfeil", "Double arrow"),
+    ("Drittes Dokument unten lesen", "Read a third document below"),
+    ("Druck kalibrieren", "Calibrate pressure"),
+    ("Druckempfindlich", "Pressure sensitive"),
+    ("Druckempfindlichkeit", "Pressure sensitivity"),
+    ("Druckkurve", "Pressure curve"),
+    ("Du bist dran", "Your turn"),
+    ("Dunkelblau", "Dark blue"),
+    ("Dunkelgrün", "Dark green"),
+    ("Dunkles Papier", "Dark paper"),
+    ("Dunkles Papier (Strg+Umschalt+D)", "Dark paper (Ctrl+Shift+D)"),
+    ("Duplizieren (Strg+D)", "Duplicate (Ctrl+D)"),
+    ("Ein Dokument hat ungespeicherte Änderungen.", "One document has unsaved changes."),
+    ("Einfügen (Strg+V)", "Paste (Ctrl+V)"),
+    ("Einfügen rückgängig gemacht", "Insertion undone"),
+    ("Einkreisen und Claude fragen", "Circle and ask Claude"),
+    ("Einstellungen", "Settings"),
+    ("Erklär das", "Explain this"),
+    ("Erklär mir das", "Explain this to me"),
+    ("Erkläre mir diese Seite Schritt für Schritt.", "Explain this page to me step by step."),
+    ("Erkläre mir diesen Ausschnitt.", "Explain this section to me."),
+    ("Erklären", "Explain"),
+    ("Erklärung", "Explanation"),
+    ("Erklärung beenden (Esc)", "End walkthrough (Esc)"),
+    ("Esc öffnet den Dialog. Pro Modul läuft ein eigenes Gespräch.", "Esc opens the dialog. Each course has its own conversation."),
+    ("Export fehlgeschlagen", "Export failed"),
+    ("Fadenkreuz", "Crosshair"),
+    ("Fasse diese Seite kurz zusammen.", "Briefly summarize this page."),
+    ("Fein", "Fine"),
+    ("Fertig", "Done"),
+    ("Finger", "Fingers"),
+    ("Finger schreiben nie, sie verschieben und zoomen nur.", "Fingers never write, they only pan and zoom."),
+    ("Finger-Vorhersage", "Finger prediction"),
+    ("Fixieren: danach nicht mehr auswählbar oder radierbar (lösen über Menü)", "Lock: can no longer be selected or erased (unlock from the menu)"),
+    ("Fixierte Objekte dieser Seite lösen", "Unlock locked objects on this page"),
+    ("Formen", "Shapes"),
+    ("Formen beim Absetzen erkennen", "Recognize shapes on lift"),
+    ("Frag mich zum Stoff dieser Seite ab, mit Quizfragen.", "Quiz me on the material of this page."),
+    ("Frage mit dem Stift schreiben", "Write your question with the pen"),
+    ("Fragt höchstens einmal am Tag bei GitHub nach. GitHub sieht dabei deine IP-Adresse.", "Asks GitHub at most once a day. GitHub can see your IP address when this happens."),
+    ("Ganze Striche löschen", "Erase whole strokes"),
+    ("Gefunden, Formeln werden sauber gesetzt", "Found, formulas are typeset properly"),
+    ("Gefunden, die KI-Funktionen sind bereit", "Found, the AI features are ready"),
+    ("Gefüllt", "Filled"),
+    ("Gelb", "Yellow"),
+    ("Gespeichert", "Saved"),
+    ("Gilt für neue Dokumente und für Seiten, die nach einem PDF eingefügt werden. Einzelne Seiten änderst du im Menü unter „Papier dieser Seite“ oder in der Seitenleiste.", "Applies to new documents and to pages inserted after a PDF. Change individual pages under “Paper of this page” in the menu or in the sidebar."),
+    ("Glatt (stufenlose Breite)", "Smooth (continuous width)"),
+    ("Gleitweite", "Glide distance"),
+    ("Glättung", "Smoothing"),
+    ("Graphit fasst das Gespräch zusammen …", "Graphit is summarizing the conversation …"),
+    ("Graphit läuft auch ohne sie, nur die jeweilige Funktion fehlt dann.", "Graphit also runs without them, only the matching feature is missing."),
+    ("Grau", "Gray"),
+    ("Größe", "Size"),
+    ("Grün", "Green"),
+    ("Haltedauer", "Hold time"),
+    ("Halten zum Begradigen", "Hold to straighten"),
+    ("Handballen-Erkennung", "Palm rejection"),
+    ("Handschriftliche Notizen und PDFs, mit Claude als Lernhilfe. Du kannst alles später in den Einstellungen ändern.", "Handwritten notes and PDFs, with Claude as a study companion. You can change everything later in the settings."),
+    ("Hart", "Hard"),
+    ("Helfer", "Helpers"),
+    ("Hellblau", "Light blue"),
+    ("Hellgrün", "Light green"),
+    ("Hintergrund-PDF wählen", "Choose background PDF"),
+    ("Hintergrund-PDF wählen…", "Choose background PDF…"),
+    ("Hoch", "High"),
+    ("Höchstdauer eines Tipps", "Maximum tap duration"),
+    ("Im Dokument suchen", "Search in document"),
+    ("Im Viewer öffnen", "Open in reader"),
+    ("In Notiz einfügen", "Insert into note"),
+    ("In Notiz übernehmen", "Add to note"),
+    ("In allen Notizen suchen", "Search all notes"),
+    ("In die Notiz eingefügt", "Inserted into the note"),
+    ("Kalibrierung zurücksetzen", "Reset calibration"),
+    ("Kariert", "Grid"),
+    ("Kein Radius: jeder Strich, den die Spitze kreuzt, verschwindet komplett", "No radius: every stroke the tip crosses disappears completely"),
+    ("Keine", "None"),
+    ("Keine Xournal-Datei", "Not a Xournal file"),
+    ("Keine lesbare PDF-Datei", "Not a readable PDF file"),
+    ("Keiner", "None"),
+    ("Keiner gewählt", "None selected"),
+    ("Klassisch (wie Xournal++)", "Classic (like Xournal++)"),
+    ("Klausur", "Exam"),
+    ("Koordinatensystem", "Coordinate axes"),
+    ("Kopieren (Strg+C)", "Copy (Ctrl+C)"),
+    ("Koralle", "Coral"),
+    ("Kreise, Rechtecke, Dreiecke und Linien werden automatisch sauber", "Circles, rectangles, triangles and lines are cleaned up automatically"),
+    ("Kreise, Rechtecke, Dreiecke und Linien werden automatisch sauber.\nUnabhängig davon: Stift kurz still halten erkennt die Form immer.", "Circles, rectangles, triangles and lines are cleaned up automatically.\nIn any case: holding the pen still briefly always recognizes the shape."),
+    ("Kurz (0,3 s)", "Short (0.3 s)"),
+    ("Kurzes Tippen", "Short tap"),
+    ("LaTeX und Pandoc", "LaTeX and Pandoc"),
+    ("Laden fehlgeschlagen", "Loading failed"),
+    ("Lang (0,7 s)", "Long (0.7 s)"),
+    ("Lasso (frei umranden)", "Lasso (freehand)"),
+    ("Lavendel", "Lavender"),
+    ("Leicht (8 ms)", "Light (8 ms)"),
+    ("Leichtes und festes Schreiben lagen zu nah beieinander. Bitte noch einmal, mit deutlicherem Unterschied.", "Light and firm writing were too close together. Please try again with a clearer difference."),
+    ("Lernstand ansehen", "View progress"),
+    ("Lese-Viewer", "Reader"),
+    ("Linie", "Line"),
+    ("Liniert", "Ruled"),
+    ("Liniert mit Rand", "Ruled with margin"),
+    ("Lokale Kopie: Änderungen gehen nicht ins Original zurück", "Local copy: changes do not go back to the original"),
+    ("Los geht’s", "Let's go"),
+    ("Lädt die Datei …", "Loading the file …"),
+    ("Löschen (Entf)", "Delete (Del)"),
+    ("Marker", "Highlighter"),
+    ("Maximal", "Maximum"),
+    ("Meine Rechnung prüfen", "Check my work"),
+    ("Mich abfragen", "Quiz me"),
+    ("Mittel", "Medium"),
+    ("Modell für die nächste Frage", "Model for the next question"),
+    ("Nach neuen Versionen suchen", "Check for new versions"),
+    ("Nach oben", "Move up"),
+    ("Nach unten", "Move down"),
+    ("Nachfragen", "Follow up"),
+    ("Neigung wie beim Bleistift", "Tilt like a pencil"),
+    ("Neu beginnen", "Start over"),
+    ("Neue Seiten", "New pages"),
+    ("Neues Dokument", "New document"),
+    ("Neues Gespräch für dieses Modul", "New conversation for this course"),
+    ("Nicht gefunden: Formeln erscheinen in Claudes Antworten als Rohtext", "Not found: formulas appear as raw text in Claude's answers"),
+    ("Nicht gefunden: Installiere Claude Code und melde dich an, um die KI zu nutzen", "Not found: install Claude Code and sign in to use the AI features"),
+    ("Nicht kalibriert: voller Druckbereich des Stifts", "Not calibrated: full pressure range of the pen"),
+    ("Nichts", "Nothing"),
+    ("Niedrig", "Low"),
+    ("Normal (0,45 s)", "Normal (0.45 s)"),
+    ("Notiz.xopp", "Note.xopp"),
+    ("Notizen", "Notes"),
+    ("Notizen und PDFs", "Notes and PDFs"),
+    ("Notizordner", "Notes folder"),
+    ("Nur Bilder lassen sich anhängen", "Only images can be attached"),
+    ("Nur Tipps", "Hints only"),
+    ("Nur in Wischrichtung", "Swipe direction only"),
+    ("Nur während der Stift aufliegt", "Only while the pen is touching"),
+    ("Nächster Treffer (Enter)", "Next match (Enter)"),
+    ("Obere Taste", "Upper button"),
+    ("Objekt unter dem Stift auswählen", "Select the object under the pen"),
+    ("Old_exams im Notizordner", "Old_exams in the notes folder"),
+    ("Optionale Helfer", "Optional helpers"),
+    ("Ordner", "Folders"),
+    ("Ordner wählen", "Choose folder"),
+    ("PDF exportiert", "PDF exported"),
+    ("PDF wählen…", "Choose PDF…"),
+    ("Papier dieser Seite", "Paper of this page"),
+    ("Passende Altklausur-Aufgaben finden", "Find matching past exam questions"),
+    ("Pfeil", "Arrow"),
+    ("Platz einfügen", "Insert space"),
+    ("Programm", "Application"),
+    ("Prüfe meine Rechnung auf dieser Seite und zeig mir, wo Fehler sind.", "Check my work on this page and show me where the mistakes are."),
+    ("Prüfen", "Check"),
+    ("Punkt in Stiftfarbe", "Dot in pen color"),
+    ("Punkte", "Dotted"),
+    ("Radialmenü", "Radial menu"),
+    ("Radierer", "Eraser"),
+    ("Radierer-Ende", "Eraser end"),
+    ("Rechne auf der Seite, dann sieht Claude sich deine Lösung an", "Work it out on the page, then Claude will look at your solution"),
+    ("Rechteck", "Rectangle"),
+    ("Ring mit Werkzeugen und Farben direkt an der Stiftspitze. Auch per Rechtsklick.", "A ring of tools and colors right at the pen tip. Also available with a right-click."),
+    ("Rosa", "Rose"),
+    ("Rot", "Red"),
+    ("Rückgängig (Strg+Z)", "Undo (Ctrl+Z)"),
+    ("Schiebt und zoomt um ein paar Millisekunden voraus, damit die Seite am Finger klebt", "Pans and zooms a few milliseconds ahead so the page sticks to your finger"),
+    ("Schließen (Esc)", "Close (Esc)"),
+    ("Schreibfeld leeren", "Clear writing area"),
+    ("Schreibgefühl", "Writing feel"),
+    ("Schritte vorlesen", "Read steps aloud"),
+    ("Schräg gehaltener Stift (ab etwa 35°) macht den Strich breiter, zum Schraffieren", "Holding the pen at an angle (from about 35°) widens the stroke for shading"),
+    ("Schwarz", "Black"),
+    ("Schwung", "Momentum"),
+    ("Schwung beim Wischen", "Momentum when swiping"),
+    ("Sehr fein", "Very fine"),
+    ("Sehr hoch", "Very high"),
+    ("Sehr stark (30 ms)", "Very strong (30 ms)"),
+    ("Seite duplizieren", "Duplicate page"),
+    ("Seite einfügen", "Insert page"),
+    ("Seite gleitet nach dem Loslassen weiter", "The page keeps gliding after you let go"),
+    ("Seite löschen", "Delete page"),
+    ("Seite zusammenfassen", "Summarize page"),
+    ("Seitenbreite", "Fit width"),
+    ("Seitenleiste (F9)", "Sidebar (F9)"),
+    ("Senden", "Send"),
+    ("Skizze in die Notiz übernehmen", "Add sketch to the note"),
+    ("Solange der Stift in der Nähe ist", "While the pen is nearby"),
+    ("Sonst Radialmenü öffnen", "Otherwise open the radial menu"),
+    ("Speichern", "Save"),
+    ("Speichern (Strg+S)", "Save (Ctrl+S)"),
+    ("Speichern fehlgeschlagen", "Saving failed"),
+    ("Speichern unter", "Save as"),
+    ("Speichern unter…", "Save as…"),
+    ("Standard", "Default"),
+    ("Standard-Effort", "Default effort"),
+    ("Standardmodell", "Default model"),
+    ("Standardpapier", "Default paper"),
+    ("Stark (22 ms)", "Strong (22 ms)"),
+    ("Starten…", "Start…"),
+    ("Stift", "Pen"),
+    ("Stift mitten im Strich kurz still halten macht ihn zur geraden Linie", "Holding the pen still mid-stroke turns it into a straight line"),
+    ("Stift still auf eine Stelle halten", "Hold the pen still on one spot"),
+    ("Stift umgedreht", "Pen flipped over"),
+    ("Stifttaste 1", "Pen button 1"),
+    ("Stifttaste 2", "Pen button 2"),
+    ("Stifttasten", "Pen buttons"),
+    ("Strichbreite folgt dem Stiftdruck", "Stroke width follows pen pressure"),
+    ("Strichdarstellung", "Stroke style"),
+    ("Stärke", "Strength"),
+    ("Suche in den Altklausuren Aufgaben zum Stoff dieser Seite und nenne sie mit Quelle.", "Search the past exams for questions on the material of this page and list them with their source."),
+    ("Taste gedrückt halten und schreiben. Sind die Tasten vertauscht, hier einfach tauschen.", "Hold a button and write. If the buttons are swapped, simply swap them here."),
+    ("Teile von Strichen radieren", "Erase parts of strokes"),
+    ("Thema entfernen", "Remove topic"),
+    ("Tipp zeigen", "Show hint"),
+    ("Tippen wählt ein einzelnes Objekt.\nStifttaste 2 wählt immer per Lasso.", "Tapping selects a single object.\nPen button 2 always selects with the lasso."),
+    ("Türkis", "Turquoise"),
+    ("Unbenannt", "Untitled"),
+    ("Ungespeicherte Änderungen gehen sonst verloren.", "Otherwise, unsaved changes will be lost."),
+    ("Unten im Viewer öffnen", "Open in lower reader"),
+    ("Untere Taste (näher an der Spitze)", "Lower button (closer to the tip)"),
+    ("Unteren Viewer schließen", "Close lower reader"),
+    ("Verschieben (Hand)", "Pan (hand)"),
+    ("Verwerfen", "Discard"),
+    ("Viewer schließen", "Close reader"),
+    ("Violett", "Violet"),
+    ("Vollbild", "Fullscreen"),
+    ("Vorheriger Treffer (Umschalt+Enter)", "Previous match (Shift+Enter)"),
+    ("Vorhersage", "Prediction"),
+    ("Vorlesen", "Read aloud"),
+    ("Vorlesung ab hier durchgehen", "Walk through the lecture from here"),
+    ("Vorlesung durchgearbeitet", "Lecture completed"),
+    ("Wann Berührungen ignoriert werden", "When touches are ignored"),
+    ("Weich", "Soft"),
+    ("Weinrot", "Wine red"),
+    ("Weiter", "Next"),
+    ("Weitere Farben", "More colors"),
+    ("Werkzeug", "Tool"),
+    ("Wie Claude dir in diesem Modul hilft", "How Claude helps you in this course"),
+    ("Wie aktuelle Seite", "Same as current page"),
+    ("Wie der Strichfilter in Xournal++: ein sehr kurzer Tipp wird nicht als Punkt gezeichnet. Ein Tipp direkt nach einem Strich bleibt ein Punkt (i-Punkt).", "Like the stroke filter in Xournal++: a very short tap is not drawn as a dot. A tap right after a stroke stays a dot (as on an i)."),
+    ("Wie die Seite nach einem Wisch mit einem Finger weitergleitet.", "How the page keeps gliding after a one-finger swipe."),
+    ("Wie gründlich Claude nachdenkt: höher ist genauer, aber langsamer", "How thoroughly Claude thinks: higher is more accurate but slower"),
+    ("Wie lange die Seite nachläuft", "How long the page keeps moving"),
+    ("Wie stark leichter Druck schon breite Striche ergibt", "How much light pressure already produces wide strokes"),
+    ("Wie viel Tempo ein Wisch mitgibt", "How much speed a swipe adds"),
+    ("Wieder als schwebendes Fenster", "Back to a floating window"),
+    ("Wiederholen (Strg+Y)", "Redo (Ctrl+Y)"),
+    ("Willkommen bei Graphit", "Welcome to Graphit"),
+    ("Zeichnet den Strich ein Stück voraus und gleicht so die Bildschirm-Verzögerung aus", "Draws the stroke slightly ahead to compensate for display latency"),
+    ("Ziehen verschiebt das Fenster, Doppelklick holt es zurück in die Mitte", "Drag to move the window, double-click to bring it back to the center"),
+    ("Ziehen ändert die Höhe", "Drag to change the height"),
+    ("Zuletzt geöffnet", "Recently opened"),
+    ("Zurück", "Back"),
+    ("Zweites Dokument daneben lesen (F8)", "Read a second document alongside (F8)"),
+    ("\nMelde dich im Terminal neu an: claude", "\nSign in again in the terminal: claude"),
+    ("kräftig", "strong"),
+    ("kurz", "short"),
+    ("lang", "long"),
+    ("leeres Dokument", "empty document"),
+    ("sanft", "gentle"),
+    ("unerwartetes Dateiende", "unexpected end of file"),
+    ("unerwartetes Dateiende im Tag", "unexpected end of file in tag"),
+    ("unterminierte Deklaration", "unterminated declaration"),
+    ("unterminierte Verarbeitungsanweisung", "unterminated processing instruction"),
+    ("unterminierter Attributwert", "unterminated attribute value"),
+    ("unterminierter Kommentar", "unterminated comment"),
+    ("unterminiertes CDATA", "unterminated CDATA"),
+    ("unterminiertes End-Tag", "unterminated end tag"),
+    ("Ändern…", "Change…"),
+    ("Ändert nur die Anzeige, die Datei bleibt gleich", "Only changes the display, the file stays the same"),
+    ("Änderungen gelten nach einem Neustart von Graphit.", "Changes apply after restarting Graphit."),
+    ("Änderungen speichern?", "Save changes?"),
+    ("Öffnen", "Open"),
+    ("Öffnen (Strg+O)", "Open (Ctrl+O)"),
+    ("Öffnen…", "Open…"),
+    ("Über PDF-Text markiert der Marker exakt die Textzeilen – wie in einem PDF-Reader.", "Over PDF text, the highlighter marks exactly the text lines, as in a PDF reader."),
+    ("Übergeordneter Ordner", "Parent folder"),
+    ("Übernehmen", "Apply"),
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every text passed to `tl` in the source has an English translation.
+    #[test]
+    fn every_text_is_translated() {
+        let known: HashMap<&str, &str> = EN.iter().copied().collect();
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        for dir in ["src", "src/canvas"] {
+            for entry in std::fs::read_dir(dir).expect("source folder") {
+                let path = entry.expect("entry").path();
+                if path.extension().is_some_and(|e| e == "rs") && path.file_name().is_none_or(|n| n != "i18n.rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let identical = ["Normal", "Linear", "Hand", "Ellipse", "Orange", "Pink", "Mint", "Normal (14 ms)"];
+        let mut missing = Vec::new();
+        for path in files {
+            let text = std::fs::read_to_string(&path).expect("source file");
+            for part in text.split("tl(\"").skip(1) {
+                let end = part.char_indices().find(|&(i, c)| c == '"' && !part[..i].ends_with('\\')).expect("end of literal").0;
+                let key = part[..end].replace("\\n", "\n");
+                if !known.contains_key(key.as_str()) && !identical.contains(&key.as_str()) {
+                    missing.push(format!("{}: {key}", path.display()));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "missing translations: {missing:#?}");
+    }
+
+    #[test]
+    fn constant_tables_are_translated() {
+        let known: HashMap<&str, &str> = EN.iter().copied().collect();
+        let identical = ["Orange", "Pink", "Mint"];
+        let names = crate::tools::COLOR_NAMES.iter().copied().chain(crate::settings::PAPERS.iter().map(|p| p.0)).chain(crate::claude::EFFORTS.iter().map(|e| e.0));
+        for name in names {
+            assert!(known.contains_key(name) || identical.contains(&name), "{name}");
+        }
+    }
+}

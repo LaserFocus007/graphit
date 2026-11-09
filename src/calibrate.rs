@@ -38,7 +38,7 @@ fn range(light: &[f64], hard: &[f64]) -> Option<(f64, f64)> {
 
 pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas, on_done: impl Fn(f64, f64) + 'static) {
     let data = Rc::new(RefCell::new(Data::default()));
-    let dialog = adw::Dialog::builder().title("Druck kalibrieren").content_width(620).build();
+    let dialog = adw::Dialog::builder().title(crate::i18n::tl("Druck kalibrieren")).content_width(620).build();
     let bx = gtk::Box::new(gtk::Orientation::Vertical, 12);
     bx.set_margin_top(12);
     bx.set_margin_bottom(18);
@@ -67,8 +67,8 @@ pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas, on_done: impl Fn(f6
 
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
-    let again = gtk::Button::with_label("Neu beginnen");
-    let next = gtk::Button::with_label("Weiter");
+    let again = gtk::Button::with_label(crate::i18n::tl("Neu beginnen"));
+    let next = gtk::Button::with_label(crate::i18n::tl("Weiter"));
     next.add_css_class("suggested-action");
     buttons.append(&again);
     buttons.append(&next);
@@ -82,32 +82,32 @@ pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas, on_done: impl Fn(f6
             let d = data.borrow();
             match d.step {
                 0 => {
-                    info.set_text("1/2 – Schreib ein paar Wörter so leicht, wie du beim zügigen Mitschreiben schreibst.");
-                    status.set_text(&format!("{} Messpunkte", d.light.len()));
-                    next.set_label("Weiter");
+                    info.set_text(crate::i18n::tl("1/2 – Schreib ein paar Wörter so leicht, wie du beim zügigen Mitschreiben schreibst."));
+                    status.set_text(&crate::tr!("{} Messpunkte", "{} samples", d.light.len()));
+                    next.set_label(crate::i18n::tl("Weiter"));
                     next.set_sensitive(d.light.len() >= 40);
                 }
                 1 => {
-                    info.set_text("2/2 – Jetzt ein paar Striche richtig fest, so wie du dicke Linien ziehen würdest.");
-                    status.set_text(&format!("{} Messpunkte", d.hard.len()));
-                    next.set_label("Auswerten");
+                    info.set_text(crate::i18n::tl("2/2 – Jetzt ein paar Striche richtig fest, so wie du dicke Linien ziehen würdest."));
+                    status.set_text(&crate::tr!("{} Messpunkte", "{} samples", d.hard.len()));
+                    next.set_label(crate::i18n::tl("Auswerten"));
                     next.set_sensitive(d.hard.len() >= 40);
                 }
                 _ => {
                     match range(&d.light, &d.hard) {
                         Some((lo, hi)) => {
-                            info.set_text(&format!(
-                                "Leicht ≈ {:.2}, fest ≈ {:.2}. Graphit nutzt künftig den Bereich {:.2}–{:.2} für die volle Strichbreite.",
+                            info.set_text(&crate::tr!(
+                                "Leicht ≈ {:.2}, fest ≈ {:.2}. Graphit nutzt künftig den Bereich {:.2}–{:.2} für die volle Strichbreite.", "Light ≈ {:.2}, firm ≈ {:.2}. Graphit will now use the range {:.2}–{:.2} for the full stroke width.",
                                 percentile(&d.light, 0.5).unwrap_or(0.0),
                                 percentile(&d.hard, 0.5).unwrap_or(0.0),
                                 lo,
                                 hi
                             ));
-                            next.set_label("Übernehmen");
+                            next.set_label(crate::i18n::tl("Übernehmen"));
                             next.set_sensitive(true);
                         }
                         None => {
-                            info.set_text("Leichtes und festes Schreiben lagen zu nah beieinander. Bitte noch einmal, mit deutlicherem Unterschied.");
+                            info.set_text(crate::i18n::tl("Leichtes und festes Schreiben lagen zu nah beieinander. Bitte noch einmal, mit deutlicherem Unterschied."));
                             next.set_sensitive(false);
                         }
                     }

@@ -117,7 +117,7 @@ pub fn load(path: &Path) -> Result<Document, String> {
     let src = read_maybe_gz(path).map_err(|e| e.to_string())?;
     let root = xml::parse(&src)?;
     if root.name != "xournal" {
-        return Err("Keine Xournal-Datei".into());
+        return Err(crate::i18n::tl("Keine Xournal-Datei").into());
     }
     let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut doc = Document::new_blank("plain");

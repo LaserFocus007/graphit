@@ -100,16 +100,16 @@ fn short_path(p: &str) -> String {
 fn tool_event(name: &str, input: &Value) -> Event {
     let s = |k: &str| input.get(k).and_then(Value::as_str).unwrap_or("");
     let (text, lasting) = match name {
-        "Read" => (format!("Liest {}", short_path(s("file_path"))), false),
-        "Write" => (format!("Schreibt {}", short_path(s("file_path"))), true),
-        "Edit" | "MultiEdit" | "NotebookEdit" => (format!("Ändert {}", short_path(s("file_path"))), true),
+        "Read" => (crate::tr!("Liest {}", "Reading {}", short_path(s("file_path"))), false),
+        "Write" => (crate::tr!("Schreibt {}", "Writing {}", short_path(s("file_path"))), true),
+        "Edit" | "MultiEdit" | "NotebookEdit" => (crate::tr!("Ändert {}", "Editing {}", short_path(s("file_path"))), true),
         "Bash" => {
             let d = if s("description").is_empty() { s("command") } else { s("description") };
             let line = d.lines().next().unwrap_or("");
             let short: String = line.chars().take(70).collect();
-            (format!("Führt aus: {short}{}", if short.len() < line.len() { " …" } else { "" }), true)
+            (crate::tr!("Führt aus: {short}{}", "Running: {short}{}", if short.len() < line.len() { " …" } else { "" }), true)
         }
-        "Grep" | "Glob" => (format!("Sucht {}", s("pattern")), false),
+        "Grep" | "Glob" => (crate::tr!("Sucht {}", "Searching {}", s("pattern")), false),
         other => (other.to_string(), false),
     };
     Event::Tool { text, lasting }
@@ -135,7 +135,7 @@ pub fn parse_line(line: &str) -> Vec<Event> {
             let u = &d["message"]["usage"];
             let used: u64 = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].iter().filter_map(|k| u[k].as_u64()).sum();
             let tools = d["message"]["content"].as_array().into_iter().flatten().filter(|b| b["type"] == "tool_use");
-            let tools = tools.map(|b| tool_event(b["name"].as_str().unwrap_or("Werkzeug"), &b["input"]));
+            let tools = tools.map(|b| tool_event(b["name"].as_str().unwrap_or(crate::i18n::tl("Werkzeug")), &b["input"]));
             (used > 0).then_some(Event::Context(used as u32)).into_iter().chain(tools).collect()
         }
         "result" => {
@@ -156,7 +156,7 @@ fn claude_binary() -> PathBuf {
 const SYSTEM_PROMPT: &str = r#"Du läufst eingebettet in Graphit, einer App für handschriftliche Notizen. Der Nutzer studiert, dein Arbeitsordner ist ein Studienmodul mit seinen Notizen und Unterlagen. Deine Antwort erscheint in einem kleinen Dialog.
 
 Grundregeln:
-- Antworte knapp und in der Sprache der Frage.
+- Antworte knapp und immer in der Sprache der eigentlichen Nutzerfrage, auch in Führungen, Quiz und Einträgen. Dieser Kontext und die Sprache der Notizen zählen dabei nicht.
 - Schreibe Formeln als LaTeX: $…$ im Text, $$…$$ abgesetzt. Graphit setzt sie mit pdflatex (amsmath, mathtools, bm), auch in Tabellen, Führungen und Einfüge-Texten. Mehrzeiliges mit aligned oder cases.
 - Zu jeder Anfrage nennt Graphit die aktuelle Seite und die ganze Notiz als PDF sowie die Lese-Viewer. Handschrift ist nur in diesen PDFs lesbar.
 - Bearbeite .xopp-Dateien nie direkt: Graphit hat sie offen und würde deine Änderung überschreiben.
@@ -263,7 +263,7 @@ fn launch(dir: &Path, cache: &Path, prompt: &str, session: Option<&str>, model: 
             let err = err_text.lock().unwrap().trim().to_string();
             let error = match status {
                 Ok(s) if s.success() && err.is_empty() => None,
-                _ if err.is_empty() => Some("Abgebrochen".to_string()),
+                _ if err.is_empty() => Some(crate::i18n::tl("Abgebrochen").to_string()),
                 _ => Some(err),
             };
             let _ = tx.send_blocking(Event::Finished { error });
@@ -356,7 +356,7 @@ impl Conv {
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .map(|v| Msg { kind: Kind::parse(v["kind"].as_str().unwrap_or("")), text: v["text"].as_str().unwrap_or("").to_string() })
             .collect();
-        let name = if dir == root { "Alle Notizen".to_string() } else { short_path(&dir.to_string_lossy()) };
+        let name = if dir == root { crate::i18n::tl("Alle Notizen").to_string() } else { short_path(&dir.to_string_lossy()) };
         Rc::new(Conv {
             dir: dir.to_path_buf(),
             name,
@@ -457,7 +457,7 @@ fn strip_math(s: &str) -> String {
 }
 
 fn lecture_prompt(start: usize) -> String {
-    format!("Vorlesungsmodus: Führe mich durch den nächsten Abschnitt dieser Notiz ab Seite {start}. Nimm 3 bis 5 zusammengehörende Seiten und mache daraus eine Führung, jeder Schritt mit seite, am Ende ein kurzes Quiz. Beende deine Antwort mit ⟦weiter: N⟧, wobei N die erste Seite des nächsten Abschnitts ist, oder mit ⟦weiter: ende⟧, wenn die Notiz zu Ende ist.")
+    crate::tr!("Vorlesungsmodus: Führe mich durch den nächsten Abschnitt dieser Notiz ab Seite {start}. Nimm 3 bis 5 zusammengehörende Seiten und mache daraus eine Führung, jeder Schritt mit seite, am Ende ein kurzes Quiz. Beende deine Antwort mit ⟦weiter: N⟧, wobei N die erste Seite des nächsten Abschnitts ist, oder mit ⟦weiter: ende⟧, wenn die Notiz zu Ende ist.", "Lecture mode: walk me through the next section of this note from page {start}. Take 3 to 5 related pages and turn them into a walkthrough, each step with its page, ending with a short quiz. End your answer with ⟦weiter: N⟧, where N is the first page of the next section, or with ⟦weiter: ende⟧ when the note is finished.")
 }
 
 fn short_title(q: &str) -> String {
@@ -821,21 +821,21 @@ impl ClaudePanel {
         let model = gtk::DropDown::from_strings(&names);
         model.add_css_class("flat");
         model.add_css_class("fk-claude-model");
-        model.set_tooltip_text(Some("Modell für die nächste Frage"));
-        let names: Vec<&str> = EFFORTS.iter().map(|e| e.0).collect();
+        model.set_tooltip_text(Some(crate::i18n::tl("Modell für die nächste Frage")));
+        let names: Vec<&str> = EFFORTS.iter().map(|e| crate::i18n::tl(e.0)).collect();
         let effort = gtk::DropDown::from_strings(&names);
         effort.add_css_class("flat");
         effort.add_css_class("fk-claude-model");
-        effort.set_tooltip_text(Some("Wie gründlich Claude nachdenkt: höher ist genauer, aber langsamer"));
+        effort.set_tooltip_text(Some(crate::i18n::tl("Wie gründlich Claude nachdenkt: höher ist genauer, aber langsamer")));
         let attach_btn = gtk::Button::from_icon_name("mail-attachment-symbolic");
-        round(&attach_btn, "Bild anhängen (auch Strg+V oder hineinziehen)");
+        round(&attach_btn, crate::i18n::tl("Bild anhängen (auch Strg+V oder hineinziehen)"));
         let history_btn = gtk::ToggleButton::new();
         history_btn.set_icon_name("document-open-recent-symbolic");
-        history_btn.set_tooltip_text(Some("Bisheriges Gespräch dieses Moduls"));
+        history_btn.set_tooltip_text(Some(crate::i18n::tl("Bisheriges Gespräch dieses Moduls")));
         history_btn.add_css_class("flat");
         history_btn.add_css_class("circular");
         let new_btn = gtk::Button::from_icon_name("list-add-symbolic");
-        round(&new_btn, "Neues Gespräch für dieses Modul");
+        round(&new_btn, crate::i18n::tl("Neues Gespräch für dieses Modul"));
         let pin_btn = gtk::ToggleButton::new();
         pin_btn.set_icon_name("view-pin-symbolic");
         pin_btn.add_css_class("flat");
@@ -845,11 +845,11 @@ impl ClaudePanel {
         action_btn.add_css_class("fk-claude-send");
         let pen_btn = gtk::ToggleButton::new();
         pen_btn.set_icon_name("fk-pen-symbolic");
-        pen_btn.set_tooltip_text(Some("Frage mit dem Stift schreiben"));
+        pen_btn.set_tooltip_text(Some(crate::i18n::tl("Frage mit dem Stift schreiben")));
         pen_btn.add_css_class("flat");
         pen_btn.add_css_class("circular");
         pen_btn.set_valign(gtk::Align::Center);
-        let explain_btn = gtk::Button::with_label("Erklär das");
+        let explain_btn = gtk::Button::with_label(crate::i18n::tl("Erklär das"));
         explain_btn.add_css_class("fk-claude-next");
         explain_btn.set_valign(gtk::Align::Center);
         explain_btn.set_visible(false);
@@ -872,7 +872,7 @@ impl ClaudePanel {
         pad.add_css_class("fk-claude-pad");
         pad.set_cursor_from_name(Some("crosshair"));
         let pad_clear = gtk::Button::from_icon_name("edit-clear-symbolic");
-        round(&pad_clear, "Schreibfeld leeren");
+        round(&pad_clear, crate::i18n::tl("Schreibfeld leeren"));
         pad_clear.set_halign(gtk::Align::End);
         pad_clear.set_valign(gtk::Align::Start);
         let pad_box = gtk::Overlay::new();
@@ -885,15 +885,15 @@ impl ClaudePanel {
         context_btn.add_css_class("flat");
         context_btn.add_css_class("fk-claude-context");
         context_btn.set_visible(false);
-        context_btn.set_tooltip_text(Some(&format!(
-            "So viel Gespräch schickt Claude bei jedem Schritt mit. Ab {}k fasst Graphit es selbst zusammen, ein Klick tut das sofort.",
+        context_btn.set_tooltip_text(Some(&crate::tr!(
+            "So viel Gespräch schickt Claude bei jedem Schritt mit. Ab {}k fasst Graphit es selbst zusammen, ein Klick tut das sofort.", "This much conversation is sent with every step. From {}k, Graphit summarizes it automatically; a click does so right away.",
             COMPACT_AT / 1000
         )));
-        let names: Vec<&str> = STYLES.iter().map(|s| s.0).collect();
+        let names: Vec<&str> = STYLES.iter().map(|s| crate::i18n::tl(s.0)).collect();
         let style = gtk::DropDown::from_strings(&names);
         style.add_css_class("flat");
         style.add_css_class("fk-claude-model");
-        style.set_tooltip_text(Some("Wie Claude dir in diesem Modul hilft"));
+        style.set_tooltip_text(Some(crate::i18n::tl("Wie Claude dir in diesem Modul hilft")));
         let foot = gtk::Box::new(gtk::Orientation::Horizontal, 2);
         foot.add_css_class("fk-claude-foot");
         let fill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -921,7 +921,7 @@ impl ClaudePanel {
         let grip = gtk::Box::new(gtk::Orientation::Vertical, 0);
         grip.add_css_class("fk-claude-grip");
         grip.set_cursor_from_name(Some("ns-resize"));
-        grip.set_tooltip_text(Some("Ziehen ändert die Höhe"));
+        grip.set_tooltip_text(Some(crate::i18n::tl("Ziehen ändert die Höhe")));
         grip.append(&pill);
         let chips = gtk::FlowBox::new();
         chips.set_selection_mode(gtk::SelectionMode::None);
@@ -944,7 +944,7 @@ impl ClaudePanel {
         let handle = gtk::Box::new(gtk::Orientation::Vertical, 0);
         handle.add_css_class("fk-claude-handle");
         handle.set_cursor_from_name(Some("grab"));
-        handle.set_tooltip_text(Some("Ziehen verschiebt das Fenster, Doppelklick holt es zurück in die Mitte"));
+        handle.set_tooltip_text(Some(crate::i18n::tl("Ziehen verschiebt das Fenster, Doppelklick holt es zurück in die Mitte")));
         handle.append(&pill);
         let pin_title = gtk::Label::new(None);
         pin_title.add_css_class("fk-claude-title");
@@ -952,7 +952,7 @@ impl ClaudePanel {
         pin_title.set_xalign(0.0);
         pin_title.set_hexpand(true);
         let pin_close = gtk::Button::from_icon_name("window-close-symbolic");
-        round(&pin_close, "Schließen (Esc)");
+        round(&pin_close, crate::i18n::tl("Schließen (Esc)"));
         let pin_head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         pin_head.add_css_class("fk-claude-pinhead");
         pin_head.append(&pin_title);
@@ -985,7 +985,7 @@ impl ClaudePanel {
         let guide_count = gtk::Label::new(None);
         guide_count.add_css_class("fk-claude-count");
         let close = gtk::Button::from_icon_name("window-close-symbolic");
-        round(&close, "Erklärung beenden (Esc)");
+        round(&close, crate::i18n::tl("Erklärung beenden (Esc)"));
         let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let head_spark = gtk::Image::from_icon_name("fk-spark-symbolic");
         head_spark.add_css_class("fk-claude-spark");
@@ -997,7 +997,7 @@ impl ClaudePanel {
         head.append(&guide_count);
         let guide_speak = gtk::ToggleButton::new();
         guide_speak.set_icon_name("audio-volume-high-symbolic");
-        guide_speak.set_tooltip_text(Some("Schritte vorlesen"));
+        guide_speak.set_tooltip_text(Some(crate::i18n::tl("Schritte vorlesen")));
         guide_speak.add_css_class("flat");
         guide_speak.add_css_class("circular");
         head.append(&guide_speak);
@@ -1005,10 +1005,10 @@ impl ClaudePanel {
         let guide_steps = gtk::Box::new(gtk::Orientation::Horizontal, 3);
         let guide_text = Rich::new(330.0);
         let guide_prev = gtk::Button::from_icon_name("go-previous-symbolic");
-        round(&guide_prev, "Zurück");
-        let ask = gtk::Button::with_label("Nachfragen");
+        round(&guide_prev, crate::i18n::tl("Zurück"));
+        let ask = gtk::Button::with_label(crate::i18n::tl("Nachfragen"));
         ask.add_css_class("flat");
-        let guide_next = gtk::Button::with_label("Weiter");
+        let guide_next = gtk::Button::with_label(crate::i18n::tl("Weiter"));
         guide_next.add_css_class("fk-claude-next");
         let foot = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let fill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -1154,7 +1154,7 @@ impl ClaudePanel {
                 p.open();
                 if let Some((text, i)) = step {
                     p.followup.replace(Some(format!("[Nachfrage zu Schritt {i} von {total} der laufenden Führung. Text der Karte: {text}]\n")));
-                    p.entry.set_placeholder_text(Some(&format!("Nachfrage zu Schritt {i} …")));
+                    p.entry.set_placeholder_text(Some(&crate::tr!("Nachfrage zu Schritt {i} …", "Follow up on step {i} …")));
                 }
             }
         });
@@ -1213,7 +1213,7 @@ impl ClaudePanel {
         let w = Rc::downgrade(self);
         self.explain_btn.connect_clicked(move |_| {
             if let Some(p) = w.upgrade() {
-                p.ask("Erkläre mir diesen Ausschnitt.");
+                p.ask(crate::i18n::tl("Erkläre mir diesen Ausschnitt."));
             }
         });
         let w = Rc::downgrade(self);
@@ -1392,7 +1392,7 @@ impl ClaudePanel {
         let pinned = self.pinned.get();
         let used = self.conv.borrow().as_ref().map_or(0, |c| c.context.get());
         self.context_btn.set_visible(used > 0);
-        self.context_btn.set_label(&format!("Kontext {}k", (used + 500) / 1000));
+        self.context_btn.set_label(&crate::tr!("Kontext {}k", "Context {}k", (used + 500) / 1000));
         if used >= COMPACT_IDLE_AT {
             self.context_btn.add_css_class("fk-claude-context-high");
         } else {
@@ -1471,35 +1471,36 @@ impl ClaudePanel {
         };
         let mut actions = Vec::new();
         for (title, raw) in tours {
-            add("media-playback-start-symbolic", &format!("Führung nochmal ansehen: {title}"));
+            add("media-playback-start-symbolic", &crate::tr!("Führung nochmal ansehen: {title}", "Replay walkthrough: {title}"));
             actions.push((QuickAction::Tour(raw), true));
         }
         if let (Some(c), Some(n), Some(p)) = (&conv, &note, page) {
             match index::lecture_next(&data_dir(&c.dir), n) {
                 Some(next) => {
-                    add("media-seek-forward-symbolic", &format!("Vorlesung fortsetzen ab Seite {next}"));
+                    add("media-seek-forward-symbolic", &crate::tr!("Vorlesung fortsetzen ab Seite {next}", "Continue lecture from page {next}"));
                     actions.push((QuickAction::Ask(lecture_prompt(next)), true));
                 }
                 None => {
-                    add("media-seek-forward-symbolic", "Vorlesung ab hier durchgehen");
+                    add("media-seek-forward-symbolic", crate::i18n::tl("Vorlesung ab hier durchgehen"));
                     actions.push((QuickAction::Ask(lecture_prompt(p + 1)), false));
                 }
             }
         }
         if !shaky.is_empty() {
-            add("view-refresh-symbolic", &format!("Wiederholung starten ({} wackelig)", shaky.len()));
+            add("view-refresh-symbolic", &crate::tr!("Wiederholung starten ({} wackelig)", "Start review ({} shaky)", shaky.len()));
             let list = shaky.iter().take(index::TOPICS_IN_PROMPT).cloned().collect::<Vec<_>>().join(", ");
-            actions.push((QuickAction::Ask(format!("Starte eine Wiederholung zu diesen wackeligen Themen: {list}. Frag mich ab, mit Quizfragen und, wenn vorhanden, Aufgaben aus Altklausuren.")), true));
+            actions.push((QuickAction::Ask(crate::tr!("Starte eine Wiederholung zu diesen wackeligen Themen: {list}. Frag mich ab, mit Quizfragen und, wenn vorhanden, Aufgaben aus Altklausuren.", "Start a review of these shaky topics: {list}. Quiz me, using past exam questions where available.")), true));
         }
         if !topics.is_empty() {
-            add("emblem-ok-symbolic", "Lernstand ansehen");
+            add("emblem-ok-symbolic", crate::i18n::tl("Lernstand ansehen"));
             actions.push((QuickAction::Progress, true));
         }
         if conv.as_ref().is_some_and(|c| c.has_exams.get()) {
-            add("edit-find-symbolic", "Passende Altklausur-Aufgaben finden");
-            actions.push((QuickAction::Ask("Suche in den Altklausuren Aufgaben zum Stoff dieser Seite und nenne sie mit Quelle.".into()), false));
+            add("edit-find-symbolic", crate::i18n::tl("Passende Altklausur-Aufgaben finden"));
+            actions.push((QuickAction::Ask(crate::i18n::tl("Suche in den Altklausuren Aufgaben zum Stoff dieser Seite und nenne sie mit Quelle.").into()), false));
         }
         for (icon, label, question) in QUICK {
+            let (label, question) = (crate::i18n::tl(label), crate::i18n::tl(question));
             add(icon, label);
             actions.push((QuickAction::Ask(question.to_string()), false));
         }
@@ -1523,7 +1524,7 @@ impl ClaudePanel {
             state.add_css_class("flat");
             let remove = gtk::Button::from_icon_name("user-trash-symbolic");
             remove.add_css_class("flat");
-            remove.set_tooltip_text(Some("Thema entfernen"));
+            remove.set_tooltip_text(Some(crate::i18n::tl("Thema entfernen")));
             let (d, topic) = (data.clone(), t.name.clone());
             state.connect_clicked(move |b| {
                 let mut all = index::load_progress(&d);
@@ -1583,7 +1584,7 @@ impl ClaudePanel {
         for (id, page) in found {
             let Some(src) = conv.sources.borrow().get(id).cloned() else { continue };
             let label: String = src.name.chars().take(28).collect();
-            let b = gtk::Button::with_label(&format!("{label} · S. {page}"));
+            let b = gtk::Button::with_label(&crate::tr!("{label} · S. {page}", "{label} · p. {page}"));
             b.add_css_class("fk-claude-hint");
             b.add_css_class("fk-claude-source");
             b.set_tooltip_text(Some(&src.path.to_string_lossy()));
@@ -1824,7 +1825,7 @@ impl ClaudePanel {
         self.pin_head.set_visible(on);
         self.history_btn.set_visible(!on);
         self.pin_btn.set_active(on);
-        self.pin_btn.set_tooltip_text(Some(if on { "Wieder als schwebendes Fenster" } else { "Als Spalte rechts anheften" }));
+        self.pin_btn.set_tooltip_text(Some(if on { crate::i18n::tl("Wieder als schwebendes Fenster") } else { crate::i18n::tl("Als Spalte rechts anheften") }));
     }
 
     /// Umschalten, während das Fenster offen ist: das Gespräch bleibt stehen.
@@ -2283,7 +2284,7 @@ impl ClaudePanel {
         self.model_setting.set(true);
         self.style.set_selected(conv.style.get() as u32);
         self.model_setting.set(false);
-        self.entry.set_placeholder_text(Some(&format!("Frag Claude zu {} …", conv.name)));
+        self.entry.set_placeholder_text(Some(&crate::tr!("Frag Claude zu {} …", "Ask Claude · {} …", conv.name)));
         self.conv.replace(Some(conv.clone()));
         self.index_module(&conv);
         self.rebuild_quick();
@@ -2343,7 +2344,7 @@ impl ClaudePanel {
         self.history_btn.set_sensitive(false);
         self.reset_list(0);
         self.collapse();
-        (self.toast)(&format!("Neues Gespräch für {}", conv.name));
+        (self.toast)(&crate::tr!("Neues Gespräch für {}", "New conversation for {}", conv.name));
     }
 
     // ---------------------------------------------------------------- Bilder
@@ -2376,7 +2377,7 @@ impl ClaudePanel {
     fn attach_file(self: &Rc<Self>, src: &Path) {
         let ext = src.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         if !["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
-            (self.toast)("Nur Bilder lassen sich anhängen");
+            (self.toast)(crate::i18n::tl("Nur Bilder lassen sich anhängen"));
             return;
         }
         if let Some(p) = self.attach_path().map(|p| p.with_extension(&ext)) {
@@ -2392,7 +2393,7 @@ impl ClaudePanel {
         pic.set_size_request(30, 30);
         let b = gtk::Button::new();
         b.set_child(Some(&pic));
-        b.set_tooltip_text(Some("Bild entfernen"));
+        b.set_tooltip_text(Some(crate::i18n::tl("Bild entfernen")));
         b.add_css_class("flat");
         b.add_css_class("fk-claude-thumb");
         let w = Rc::downgrade(self);
@@ -2423,7 +2424,7 @@ impl ClaudePanel {
     }
 
     fn choose_image(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder().title("Bild anhängen").modal(true).build();
+        let dialog = gtk::FileDialog::builder().title(crate::i18n::tl("Bild anhängen")).modal(true).build();
         let root = self.overlay.root().and_downcast::<gtk::Window>();
         let w = Rc::downgrade(self);
         dialog.open(root.as_ref(), gio::Cancellable::NONE, move |res| {
@@ -2467,7 +2468,7 @@ impl ClaudePanel {
         self.status_row.set_visible(running);
         self.status.set_text(&conv.status.borrow());
         self.action_btn.set_icon_name(if running { "media-playback-stop-symbolic" } else { "go-up-symbolic" });
-        self.action_btn.set_tooltip_text(Some(if running { "Anhalten" } else { "Senden" }));
+        self.action_btn.set_tooltip_text(Some(if running { crate::i18n::tl("Anhalten") } else { crate::i18n::tl("Senden") }));
         self.update_bar();
     }
 
@@ -2510,7 +2511,7 @@ impl ClaudePanel {
                 rich.set(&found.clean, &self.engine);
                 let sources = gtk::Box::new(gtk::Orientation::Horizontal, 6);
                 self.source_buttons(conv, &found.sources, &sources);
-                let insert = gtk::Button::with_label("In Notiz einfügen");
+                let insert = gtk::Button::with_label(crate::i18n::tl("In Notiz einfügen"));
                 insert.add_css_class("flat");
                 insert.add_css_class("caption");
                 insert.add_css_class("fk-claude-insert");
@@ -2518,7 +2519,7 @@ impl ClaudePanel {
                 let speak = gtk::Button::from_icon_name("audio-volume-high-symbolic");
                 speak.add_css_class("flat");
                 speak.add_css_class("fk-claude-insert");
-                speak.set_tooltip_text(Some("Vorlesen"));
+                speak.set_tooltip_text(Some(crate::i18n::tl("Vorlesen")));
                 let w = Rc::downgrade(self);
                 let c = Rc::downgrade(conv);
                 speak.connect_clicked(move |_| {
@@ -2637,15 +2638,15 @@ impl ClaudePanel {
         let others = images.len() - pad_image.is_some() as usize;
         let mut shown = question.clone();
         if pad_image.is_some() {
-            shown = format!("{shown}\n(Frage mit dem Stift geschrieben)").trim().to_string();
+            shown = crate::tr!("{shown}\n(Frage mit dem Stift geschrieben)", "{shown}\n(question written with the pen)").trim().to_string();
         }
         if others > 0 {
-            let pictures = if others == 1 { "1 Bild".to_string() } else { format!("{others} Bilder") };
-            shown = format!("{shown}\n({pictures} angehängt)").trim().to_string();
+            let pictures = if others == 1 { crate::i18n::tl("1 Bild").to_string() } else { crate::tr!("{others} Bilder", "{others} images") };
+            shown = crate::tr!("{shown}\n({pictures} angehängt)", "{shown}\n({pictures} attached)").trim().to_string();
         }
         conv.push(Kind::User, shown);
         self.set_chips(&[]);
-        conv.status.replace("Claude denkt nach …".into());
+        conv.status.replace(crate::i18n::tl("Claude denkt nach …").into());
         // schon als laufend markieren, auch wenn die PDFs noch geschrieben werden
         conv.pid.set(Some(0));
         self.history_btn.set_sensitive(true);
@@ -2728,7 +2729,7 @@ impl ClaudePanel {
             Ok(l) => l,
             Err(e) => {
                 conv.pid.set(None);
-                conv.push(Kind::Error, format!("Claude Code ließ sich nicht starten: {e}"));
+                conv.push(Kind::Error, crate::tr!("Claude Code ließ sich nicht starten: {e}", "Claude Code could not be started: {e}"));
                 conv.save();
                 self.sync();
                 return;
@@ -2754,7 +2755,7 @@ impl ClaudePanel {
                 }
                 Event::TextStart => {
                     conv.push(Kind::Claude, "");
-                    conv.status.replace("Claude schreibt …".into());
+                    conv.status.replace(crate::i18n::tl("Claude schreibt …").into());
                 }
                 Event::Text(t) => {
                     let mut m = conv.msgs.borrow_mut();
@@ -2788,9 +2789,9 @@ impl ClaudePanel {
             return Box::pin(self.run(conv, prompt, origin, model, effort, true)).await;
         }
         if conv.stopped.replace(false) {
-            conv.push(Kind::Tool, "Angehalten");
+            conv.push(Kind::Tool, crate::i18n::tl("Angehalten"));
         } else if let Some(e) = failure {
-            let hint = if e.contains("authenticate") { "\nMelde dich im Terminal neu an: claude" } else { "" };
+            let hint = if e.contains("authenticate") { crate::i18n::tl("\nMelde dich im Terminal neu an: claude") } else { "" };
             conv.push(Kind::Error, format!("{e}{hint}"));
         }
         index::collect_transcripts(&data_dir(&conv.dir), &cache);
@@ -2801,7 +2802,7 @@ impl ClaudePanel {
             self.tour_next.set(next);
             self.quick_page.set(None);
             if next.is_none() {
-                (self.toast)("Vorlesung durchgearbeitet");
+                (self.toast)(crate::i18n::tl("Vorlesung durchgearbeitet"));
             }
         } else {
             self.tour_next.set(None);
@@ -2847,11 +2848,11 @@ impl ClaudePanel {
                 self.start_tour(tour, hints);
             } else {
                 conv.pending_tour.replace((tour, hints));
-                (self.toast)(&format!("Claude hat eine Erklärung für {}. Esc startet sie.", conv.name));
+                (self.toast)(&crate::tr!("Claude hat eine Erklärung für {}. Esc startet sie.", "Claude has a walkthrough for {}. Press Esc to start it.", conv.name));
             }
         } else if !seen {
             conv.unread.set(true);
-            (self.toast)(&format!("Claude ist fertig ({}). Esc zeigt die Antwort.", conv.name));
+            (self.toast)(&crate::tr!("Claude ist fertig ({}). Esc zeigt die Antwort.", "Claude is done ({}). Press Esc to see the answer.", conv.name));
         }
         if std::env::var("GRAPHIT_PROFILE").is_ok() {
             eprintln!("PROFILE Claude fertig: {} ({model}, Effort „{effort}“), Session {:?}, Kontext {}", conv.name, conv.session.borrow(), conv.context.get());
@@ -2866,12 +2867,12 @@ impl ClaudePanel {
         let cache = cache_dir(&conv.dir);
         let Some(out) = place::apply(&v, &cache, origin.page, &conv.last_batch, final_try).await else { return };
         if out.undone {
-            conv.push(Kind::Tool, "Einfügen rückgängig gemacht");
+            conv.push(Kind::Tool, crate::i18n::tl("Einfügen rückgängig gemacht"));
         }
         match out.placed {
             0 => {}
-            1 => conv.push(Kind::Tool, "In die Notiz eingefügt"),
-            n => conv.push(Kind::Tool, format!("{n} Einträge in die Notiz eingefügt")),
+            1 => conv.push(Kind::Tool, crate::i18n::tl("In die Notiz eingefügt")),
+            n => conv.push(Kind::Tool, crate::tr!("{n} Einträge in die Notiz eingefügt", "{n} items inserted into the note")),
         }
         for e in out.errors {
             conv.push(Kind::Tool, e);
@@ -2910,7 +2911,7 @@ impl ClaudePanel {
         let Ok(started) = launch(&conv.dir, &cache, COMPACT_PROMPT, Some(&session), model, effort) else { return };
         conv.pid.set(Some(started.pid));
         conv.compacting.set(true);
-        conv.status.replace("Graphit fasst das Gespräch zusammen …".into());
+        conv.status.replace(crate::i18n::tl("Graphit fasst das Gespräch zusammen …").into());
         self.sync_if_bound(&conv);
         let (mut summary, mut failed) = (String::new(), true);
         while let Ok(ev) = started.events.recv().await {
@@ -2932,7 +2933,7 @@ impl ClaudePanel {
             let before = conv.context.replace(0);
             conv.set_memory(Some(summary.trim().to_string()));
             conv.session.replace(None);
-            conv.push(Kind::Tool, format!("Gespräch zusammengefasst, {}k Kontext freigegeben", (before + 500) / 1000));
+            conv.push(Kind::Tool, crate::tr!("Gespräch zusammengefasst, {}k Kontext freigegeben", "Conversation summarized, {}k of context freed", (before + 500) / 1000));
             conv.save();
         }
         self.sync_if_bound(&conv);
@@ -3069,7 +3070,7 @@ impl ClaudePanel {
                 if k != right {
                     clicked.add_css_class("fk-claude-wrong");
                 }
-                let verdict = if k == right { "**Richtig.**" } else { "**Nicht ganz.**" };
+                let verdict = if k == right { crate::i18n::tl("**Richtig.**") } else { crate::i18n::tl("**Nicht ganz.**") };
                 out.set(&format!("{verdict} {}", why.clone().unwrap_or_default()), &p.engine);
                 out.root.set_visible(true);
                 let chosen = options.get(k).cloned().unwrap_or_default();
@@ -3080,7 +3081,7 @@ impl ClaudePanel {
                     c.quiz_log.borrow_mut().push(format!("- Zu „{asked}“ gewählt: „{chosen}“ ({verdict}), richtig ist „{correct}“"));
                 }
                 if k != right {
-                    let more = p.ask_button("Erklär mir das", &format!("Ich habe im Quiz „{chosen}“ gewählt, richtig ist „{correct}“. Wo liegt mein Denkfehler?"));
+                    let more = p.ask_button(crate::i18n::tl("Erklär mir das"), &crate::tr!("Ich habe im Quiz „{chosen}“ gewählt, richtig ist „{correct}“. Wo liegt mein Denkfehler?", "I chose “{chosen}” in the quiz, but “{correct}” is correct. Where did my reasoning go wrong?"));
                     p.guide_extra.insert_child_after(&more, Some(&out.root));
                 }
             });
@@ -3159,7 +3160,7 @@ impl ClaudePanel {
             self.guide_extra.append(&label);
             self.guide_extra.append(&scale);
         }
-        let take = gtk::Button::with_label("In Notiz übernehmen");
+        let take = gtk::Button::with_label(crate::i18n::tl("In Notiz übernehmen"));
         take.add_css_class("flat");
         let (data, begin, values, v) = (p.clone(), start, now, view.clone());
         take.connect_clicked(move |b| {
@@ -3196,7 +3197,7 @@ impl ClaudePanel {
         if let Some(tip) = &step.tip {
             let shown = self.extra_text(tip);
             shown.root.set_visible(false);
-            let b = gtk::Button::with_label("Tipp zeigen");
+            let b = gtk::Button::with_label(crate::i18n::tl("Tipp zeigen"));
             b.add_css_class("flat");
             let root = shown.root.clone();
             b.connect_clicked(move |b| {
@@ -3207,20 +3208,20 @@ impl ClaudePanel {
             self.guide_extra.append(&shown.root);
         }
         if let Some(task) = &step.task {
-            let b = gtk::Button::with_label("Prüfen");
+            let b = gtk::Button::with_label(crate::i18n::tl("Prüfen"));
             b.add_css_class("fk-claude-next");
-            b.set_tooltip_text(Some("Rechne auf der Seite, dann sieht Claude sich deine Lösung an"));
+            b.set_tooltip_text(Some(crate::i18n::tl("Rechne auf der Seite, dann sieht Claude sich deine Lösung an")));
             let (w, t) = (Rc::downgrade(self), task.clone());
             b.connect_clicked(move |_| {
                 if let Some(p) = w.upgrade() {
-                    p.ask(&format!("Ich habe die Aufgabe bearbeitet: {t}\nPrüfe meine Lösung auf der aktuellen Seite und gib mir Rückmeldung."));
+                    p.ask(&crate::tr!("Ich habe die Aufgabe bearbeitet: {t}\nPrüfe meine Lösung auf der aktuellen Seite und gib mir Rückmeldung.", "I worked on the exercise: {t}\nCheck my solution on the current page and give me feedback."));
                 }
             });
-            self.guide_extra.append(&self.extra_text(&format!("**Du bist dran:** {task}")).root);
+            self.guide_extra.append(&self.extra_text(&crate::tr!("**Du bist dran:** {task}", "**Your turn:** {task}")).root);
             self.guide_extra.append(&b);
         }
         if !step.sketch.is_empty() {
-            let b = gtk::Button::with_label("Skizze in die Notiz übernehmen");
+            let b = gtk::Button::with_label(crate::i18n::tl("Skizze in die Notiz übernehmen"));
             b.add_css_class("flat");
             let v = view.clone();
             b.connect_clicked(move |b| {
@@ -3232,7 +3233,7 @@ impl ClaudePanel {
         }
         if last {
             if let Some(next) = self.tour_next.get() {
-                self.guide_extra.append(&self.ask_button(&format!("Nächster Abschnitt ab Seite {next}"), &lecture_prompt(next)));
+                self.guide_extra.append(&self.ask_button(&crate::tr!("Nächster Abschnitt ab Seite {next}", "Next section from page {next}"), &lecture_prompt(next)));
             }
             for h in self.tour_hints.borrow().iter() {
                 self.guide_extra.append(&self.hint_button(h));
@@ -3247,8 +3248,8 @@ impl ClaudePanel {
         self.guide_count.set_text(&format!("{} / {n}", i + 1));
         self.guide_kind.set_text(match (&step.quiz, &step.task) {
             (Some(_), _) => "Quiz",
-            (_, Some(_)) => "Du bist dran",
-            _ => "Erklärung",
+            (_, Some(_)) => crate::i18n::tl("Du bist dran"),
+            _ => crate::i18n::tl("Erklärung"),
         });
         while let Some(c) = self.guide_steps.first_child() {
             self.guide_steps.remove(&c);
@@ -3269,7 +3270,7 @@ impl ClaudePanel {
         self.guide.add_css_class(on);
         self.guide_text.set(&index::marks(&step.text).clean, &self.engine);
         self.guide_prev.set_sensitive(i > 0);
-        self.guide_next.set_label(if i + 1 == n { "Fertig" } else { "Weiter" });
+        self.guide_next.set_label(if i + 1 == n { crate::i18n::tl("Fertig") } else { crate::i18n::tl("Weiter") });
         if let Some(old) = self.tour_view.take() {
             old.canvas.clear_guide();
         }

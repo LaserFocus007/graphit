@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Graphit
-Comment=Handschriftliche Notizen und PDF-Annotation
+Comment=Handwritten notes and PDF annotation
+Comment[de]=Handschriftliche Notizen und PDF-Annotation
 Exec=graphit %F
 Icon=io.github.graphit
 Terminal=false

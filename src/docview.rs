@@ -113,7 +113,7 @@ impl DocView {
         let sbox = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         sbox.add_css_class("fk-selbar");
         let search_entry = gtk::SearchEntry::new();
-        search_entry.set_placeholder_text(Some("Im Dokument suchen"));
+        search_entry.set_placeholder_text(Some(crate::i18n::tl("Im Dokument suchen")));
         search_entry.set_width_chars(22);
         let search_count = gtk::Label::new(None);
         search_count.add_css_class("dim-label");
@@ -121,10 +121,10 @@ impl DocView {
         search_count.set_width_chars(6);
         let prev = gtk::Button::from_icon_name("go-up-symbolic");
         prev.add_css_class("flat");
-        prev.set_tooltip_text(Some("Vorheriger Treffer (Umschalt+Enter)"));
+        prev.set_tooltip_text(Some(crate::i18n::tl("Vorheriger Treffer (Umschalt+Enter)")));
         let next = gtk::Button::from_icon_name("go-down-symbolic");
         next.add_css_class("flat");
-        next.set_tooltip_text(Some("Nächster Treffer (Enter)"));
+        next.set_tooltip_text(Some(crate::i18n::tl("Nächster Treffer (Enter)")));
         let close = gtk::Button::from_icon_name("window-close-symbolic");
         close.add_css_class("flat");
         sbox.append(&search_entry);
@@ -239,7 +239,7 @@ impl DocView {
             .or(st.doc.pdf_path.as_ref())
             .and_then(|p| p.file_stem())
             .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Unbenannt".into());
+            .unwrap_or_else(|| crate::i18n::tl("Unbenannt").into());
         (name, st.history.dirty())
     }
 
@@ -267,13 +267,13 @@ impl DocView {
             });
             self.sel_bar.append(&b);
         };
-        add("user-trash-symbolic", "Löschen (Entf)", Box::new(|v| v.canvas.delete_selection()));
-        add("edit-cut-symbolic", "Ausschneiden (Strg+X)", Box::new(|v| v.copy(true)));
-        add("edit-copy-symbolic", "Kopieren (Strg+C)", Box::new(|v| v.copy(false)));
-        add("fk-pages-symbolic", "Duplizieren (Strg+D)", Box::new(|v| v.canvas.duplicate_selection()));
+        add("user-trash-symbolic", crate::i18n::tl("Löschen (Entf)"), Box::new(|v| v.canvas.delete_selection()));
+        add("edit-cut-symbolic", crate::i18n::tl("Ausschneiden (Strg+X)"), Box::new(|v| v.copy(true)));
+        add("edit-copy-symbolic", crate::i18n::tl("Kopieren (Strg+C)"), Box::new(|v| v.copy(false)));
+        add("fk-pages-symbolic", crate::i18n::tl("Duplizieren (Strg+D)"), Box::new(|v| v.canvas.duplicate_selection()));
         add(
             "fk-spark-symbolic",
-            "Claude dazu fragen: die Auswahl geht als Bild mit",
+            crate::i18n::tl("Claude dazu fragen: die Auswahl geht als Bild mit"),
             Box::new(|v| {
                 let f = v.on_claude.borrow().clone();
                 if let Some(f) = f {
@@ -283,7 +283,7 @@ impl DocView {
         );
         add(
             "changes-prevent-symbolic",
-            "Fixieren: danach nicht mehr auswählbar oder radierbar (lösen über Menü)",
+            crate::i18n::tl("Fixieren: danach nicht mehr auswählbar oder radierbar (lösen über Menü)"),
             Box::new(|v| v.canvas.lock_selection()),
         );
         self.sel_bar.append(&gtk::Separator::new(gtk::Orientation::Vertical));
@@ -291,7 +291,7 @@ impl DocView {
             let b = gtk::Button::new();
             b.add_css_class("flat");
             b.add_css_class("fk-color");
-            b.set_tooltip_text(Some(COLOR_NAMES[i]));
+            b.set_tooltip_text(Some(crate::i18n::tl(COLOR_NAMES[i])));
             let sw = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             sw.add_css_class("fk-swatch");
             sw.add_css_class(&format!("fk-c{i}"));
@@ -391,7 +391,7 @@ impl DocView {
                     let (page, pos) = v.canvas.paste_target();
                     let png = tex.save_to_png_bytes();
                     if let Err(e) = v.canvas.insert_image(page, pos, &png) {
-                        (v.toast)(&format!("Einfügen fehlgeschlagen: {e}"));
+                        (v.toast)(&crate::tr!("Einfügen fehlgeschlagen: {e}", "Paste failed: {e}"));
                     }
                 }
             });

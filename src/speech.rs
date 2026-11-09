@@ -14,7 +14,7 @@ fn voice_dir() -> PathBuf {
 
 fn piper() -> Option<(PathBuf, PathBuf)> {
     let dir = voice_dir();
-    let (bin, model) = (dir.join("piper").join("piper"), dir.join("de_DE-thorsten-medium.onnx"));
+    let (bin, model) = (dir.join("piper").join("piper"), dir.join(crate::i18n::pick("de_DE-thorsten-medium.onnx", "en_US-lessac-medium.onnx")));
     (bin.exists() && model.exists()).then_some((bin, model))
 }
 
@@ -44,7 +44,7 @@ impl Speaker {
         }
         let Some((bin, model)) = piper() else {
             self.system.set(true);
-            let _ = Command::new("spd-say").args(["-l", "de", "-r", "10"]).arg(&text).status();
+            let _ = Command::new("spd-say").args(["-l", crate::i18n::code(), "-r", "10"]).arg(&text).status();
             return;
         };
         let pids = self.pids.borrow().clone();
@@ -125,14 +125,14 @@ fn say_tex(tex: &str) -> String {
                     "frac" | "dfrac" | "tfrac" => {
                         if let Some((a, n)) = group(&c, i) {
                             if let Some((b, m)) = group(&c, n) {
-                                out.push_str(&format!(" {} durch {} ", say_tex(&a), say_tex(&b)));
+                                out.push_str(&crate::tr!(" {} durch {} ", " {} over {} ", say_tex(&a), say_tex(&b)));
                                 i = m;
                             }
                         }
                     }
                     "sqrt" => {
                         if let Some((a, n)) = group(&c, i) {
-                            out.push_str(&format!(" Wurzel aus {} ", say_tex(&a)));
+                            out.push_str(&crate::tr!(" Wurzel aus {} ", " square root of {} ", say_tex(&a)));
                             i = n;
                         }
                     }
@@ -142,24 +142,30 @@ fn say_tex(tex: &str) -> String {
                             i = n;
                         }
                     }
-                    "cdot" | "times" => out.push_str(" mal "),
-                    "approx" => out.push_str(" ungefähr "),
-                    "le" | "leq" => out.push_str(" kleiner gleich "),
-                    "ge" | "geq" => out.push_str(" größer gleich "),
-                    "partial" => out.push_str(" partiell "),
-                    "sum" => out.push_str(" Summe "),
-                    "int" => out.push_str(" Integral "),
-                    "infty" => out.push_str(" unendlich "),
-                    "to" | "rightarrow" => out.push_str(" nach "),
+                    "cdot" | "times" => out.push_str(crate::i18n::pick(" mal ", " times ")),
+                    "approx" => out.push_str(crate::i18n::pick(" ungefähr ", " approximately ")),
+                    "le" | "leq" => out.push_str(crate::i18n::pick(" kleiner gleich ", " less than or equal to ")),
+                    "ge" | "geq" => out.push_str(crate::i18n::pick(" größer gleich ", " greater than or equal to ")),
+                    "partial" => out.push_str(crate::i18n::pick(" partiell ", " partial ")),
+                    "sum" => out.push_str(crate::i18n::pick(" Summe ", " sum ")),
+                    "int" => out.push_str(crate::i18n::pick(" Integral ", " integral ")),
+                    "infty" => out.push_str(crate::i18n::pick(" unendlich ", " infinity ")),
+                    "to" | "rightarrow" => out.push_str(crate::i18n::pick(" nach ", " to ")),
                     other => {
                         if let Some((_, spoken)) = GREEK.iter().find(|g| g.0 == other) {
+                            let spoken = match other {
+                                "mu" => crate::i18n::pick(spoken, "mu"),
+                                "nu" => crate::i18n::pick(spoken, "nu"),
+                                "Sigma" => crate::i18n::pick(spoken, "sum"),
+                                _ => spoken,
+                            };
                             out.push_str(&format!(" {spoken} "));
                         }
                     }
                 }
             }
             '^' | '_' => {
-                let word = if c[i] == '^' { " hoch " } else { " " };
+                let word = if c[i] == '^' { crate::i18n::pick(" hoch ", " to the power of ") } else { " " };
                 i += 1;
                 if let Some((a, n)) = group(&c, i) {
                     out.push_str(word);
@@ -174,7 +180,7 @@ fn say_tex(tex: &str) -> String {
                 }
             }
             '=' => {
-                out.push_str(" gleich ");
+                out.push_str(crate::i18n::pick(" gleich ", " equals "));
                 i += 1;
             }
             '+' => {
@@ -186,7 +192,7 @@ fn say_tex(tex: &str) -> String {
                 i += 1;
             }
             '/' => {
-                out.push_str(" durch ");
+                out.push_str(crate::i18n::pick(" durch ", " over "));
                 i += 1;
             }
             '{' | '}' | '&' => i += 1,

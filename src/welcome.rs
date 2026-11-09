@@ -25,11 +25,11 @@ fn present(program: &str) -> bool {
 pub fn folder_row(title: &str, window: &impl IsA<gtk::Widget>, value: Rc<RefCell<Option<PathBuf>>>, empty: &str, changed: Rc<dyn Fn(&PathBuf)>) -> adw::ActionRow {
     let show = |v: &Option<PathBuf>| v.as_ref().map_or(empty.to_string(), |p| p.display().to_string());
     let row = adw::ActionRow::builder().title(title).subtitle(show(&value.borrow())).build();
-    let button = gtk::Button::with_label("Ändern…");
+    let button = gtk::Button::with_label(crate::i18n::tl("Ändern…"));
     button.set_valign(gtk::Align::Center);
     let (win, r, empty) = (window.as_ref().clone(), row.clone(), empty.to_string());
     button.connect_clicked(move |_| {
-        let dialog = gtk::FileDialog::builder().title("Ordner wählen").modal(true).build();
+        let dialog = gtk::FileDialog::builder().title(crate::i18n::tl("Ordner wählen")).modal(true).build();
         if let Some(p) = value.borrow().as_ref().filter(|p| p.is_dir()) {
             dialog.set_initial_folder(Some(&gio::File::for_path(p)));
         }
@@ -53,29 +53,29 @@ pub fn then(app: &adw::Application, done: impl FnOnce(&adw::Application) + 'stat
         done(app);
         return;
     }
-    let window = adw::ApplicationWindow::builder().application(app).title("Willkommen bei Graphit").default_width(520).default_height(760).build();
+    let window = adw::ApplicationWindow::builder().application(app).title(crate::i18n::tl("Willkommen bei Graphit")).default_width(520).default_height(760).build();
     let library: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(Some(settings::default_library())));
     let exams: Rc<RefCell<Option<PathBuf>>> = Rc::default();
 
     let icon = gtk::Image::from_icon_name(crate::APP_ID);
     icon.set_pixel_size(84);
-    let title = gtk::Label::new(Some("Willkommen bei Graphit"));
+    let title = gtk::Label::new(Some(crate::i18n::tl("Willkommen bei Graphit")));
     title.add_css_class("title-1");
-    let intro = gtk::Label::new(Some("Handschriftliche Notizen und PDFs, mit Claude als Lernhilfe. Du kannst alles später in den Einstellungen ändern."));
+    let intro = gtk::Label::new(Some(crate::i18n::tl("Handschriftliche Notizen und PDFs, mit Claude als Lernhilfe. Du kannst alles später in den Einstellungen ändern.")));
     intro.set_wrap(true);
     intro.set_justify(gtk::Justification::Center);
     intro.add_css_class("dim-label");
 
-    let folders = adw::PreferencesGroup::builder().title("Deine Ordner").build();
-    folders.add(&folder_row("Notizordner", &window, library.clone(), "", Rc::new(|_| {})));
-    folders.add(&folder_row("Altklausuren (optional)", &window, exams.clone(), "Keiner gewählt", Rc::new(|_| {})));
+    let folders = adw::PreferencesGroup::builder().title(crate::i18n::tl("Deine Ordner")).build();
+    folders.add(&folder_row(crate::i18n::tl("Notizordner"), &window, library.clone(), "", Rc::new(|_| {})));
+    folders.add(&folder_row(crate::i18n::tl("Altklausuren (optional)"), &window, exams.clone(), crate::i18n::tl("Keiner gewählt"), Rc::new(|_| {})));
 
-    let helpers = adw::PreferencesGroup::builder().title("Optionale Helfer").description("Graphit läuft auch ohne sie, nur die jeweilige Funktion fehlt dann.").build();
+    let helpers = adw::PreferencesGroup::builder().title(crate::i18n::tl("Optionale Helfer")).description(crate::i18n::tl("Graphit läuft auch ohne sie, nur die jeweilige Funktion fehlt dann.")).build();
     let claude = present("claude") || glib::home_dir().join(".local/bin/claude").exists();
-    helpers.add(&status_row("Claude Code", claude, "Gefunden, die KI-Funktionen sind bereit", "Nicht gefunden: Installiere Claude Code und melde dich an, um die KI zu nutzen"));
-    helpers.add(&status_row("LaTeX und Pandoc", present("pdflatex") && present("pandoc"), "Gefunden, Formeln werden sauber gesetzt", "Nicht gefunden: Formeln erscheinen in Claudes Antworten als Rohtext"));
+    helpers.add(&status_row("Claude Code", claude, crate::i18n::tl("Gefunden, die KI-Funktionen sind bereit"), crate::i18n::tl("Nicht gefunden: Installiere Claude Code und melde dich an, um die KI zu nutzen")));
+    helpers.add(&status_row(crate::i18n::tl("LaTeX und Pandoc"), present("pdflatex") && present("pandoc"), crate::i18n::tl("Gefunden, Formeln werden sauber gesetzt"), crate::i18n::tl("Nicht gefunden: Formeln erscheinen in Claudes Antworten als Rohtext")));
 
-    let start = gtk::Button::with_label("Los geht’s");
+    let start = gtk::Button::with_label(crate::i18n::tl("Los geht’s"));
     start.add_css_class("suggested-action");
     start.add_css_class("pill");
     start.set_halign(gtk::Align::Center);

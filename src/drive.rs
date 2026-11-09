@@ -35,7 +35,7 @@ fn local_name(display: &str, content_type: &str) -> Result<String, String> {
         "pdf" | "xopp" | "xoj" => Ok(name),
         _ if content_type == "application/pdf" => Ok(format!("{name}.pdf")),
         _ if content_type == "application/x-xopp" => Ok(format!("{name}.xopp")),
-        _ => Err(format!("Graphit öffnet nur PDFs und Notizen, nicht „{name}“")),
+        _ => Err(crate::tr!("Graphit öffnet nur PDFs und Notizen, nicht „{name}“", "Graphit only opens PDFs and notes, not “{name}”")),
     }
 }
 
@@ -71,7 +71,7 @@ pub fn fetch(uri: &str) -> Result<Remote, String> {
     let attrs = "standard::type,standard::display-name,standard::content-type,standard::size,time::modified";
     let info = file
         .query_info(attrs, gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE)
-        .map_err(|e| format!("Datei nicht erreichbar: {}", e.message()))?;
+        .map_err(|e| crate::tr!("Datei nicht erreichbar: {}", "File not reachable: {}", e.message()))?;
     if info.file_type() == gio::FileType::Directory {
         return Ok(Remote::Folder);
     }
@@ -101,7 +101,7 @@ pub fn fetch(uri: &str) -> Result<Remote, String> {
                 }
                 // offline: lieber die alte Kopie als gar nichts
                 Err(_) if target.exists() => true,
-                Err(e) => return Err(format!("Laden fehlgeschlagen: {}", e.message())),
+                Err(e) => return Err(crate::tr!("Laden fehlgeschlagen: {}", "Loading failed: {}", e.message())),
             }
         }
     };

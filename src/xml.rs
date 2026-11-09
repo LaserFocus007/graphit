@@ -113,17 +113,17 @@ pub fn parse(src: &str) -> Result<Element, String> {
         }
         let rest = &src[i..];
         if rest.starts_with("<?") {
-            i += rest.find("?>").ok_or("unterminierte Verarbeitungsanweisung")? + 2;
+            i += rest.find("?>").ok_or(crate::i18n::tl("unterminierte Verarbeitungsanweisung"))? + 2;
         } else if rest.starts_with("<!--") {
-            i += rest.find("-->").ok_or("unterminierter Kommentar")? + 3;
+            i += rest.find("-->").ok_or(crate::i18n::tl("unterminierter Kommentar"))? + 3;
         } else if rest.starts_with("<![CDATA[") {
-            let e = rest.find("]]>").ok_or("unterminiertes CDATA")?;
+            let e = rest.find("]]>").ok_or(crate::i18n::tl("unterminiertes CDATA"))?;
             stack.last_mut().unwrap().text.push_str(&rest[9..e]);
             i += e + 3;
         } else if rest.starts_with("<!") {
-            i += rest.find('>').ok_or("unterminierte Deklaration")? + 1;
+            i += rest.find('>').ok_or(crate::i18n::tl("unterminierte Deklaration"))? + 1;
         } else if rest.starts_with("</") {
-            let e = rest.find('>').ok_or("unterminiertes End-Tag")?;
+            let e = rest.find('>').ok_or(crate::i18n::tl("unterminiertes End-Tag"))?;
             i += e + 1;
             if stack.len() > 1 {
                 let el = stack.pop().unwrap();
@@ -142,7 +142,7 @@ pub fn parse(src: &str) -> Result<Element, String> {
                     j += 1;
                 }
                 if j >= b.len() {
-                    return Err("unerwartetes Dateiende im Tag".into());
+                    return Err(crate::i18n::tl("unerwartetes Dateiende im Tag").into());
                 }
                 if b[j] == b'>' {
                     j += 1;
@@ -166,10 +166,10 @@ pub fn parse(src: &str) -> Result<Element, String> {
                     while j < b.len() && b[j].is_ascii_whitespace() {
                         j += 1;
                     }
-                    let q = *b.get(j).ok_or("unerwartetes Dateiende")?;
+                    let q = *b.get(j).ok_or(crate::i18n::tl("unerwartetes Dateiende"))?;
                     if q == b'"' || q == b'\'' {
                         let vs = j + 1;
-                        let ve = src[vs..].find(q as char).ok_or("unterminierter Attributwert")? + vs;
+                        let ve = src[vs..].find(q as char).ok_or(crate::i18n::tl("unterminierter Attributwert"))? + vs;
                         el.attrs.push((name, unescape(&src[vs..ve])));
                         j = ve + 1;
                     } else {
@@ -196,5 +196,5 @@ pub fn parse(src: &str) -> Result<Element, String> {
         stack.last_mut().unwrap().children.push(el);
     }
     let root = stack.pop().unwrap();
-    root.children.into_iter().next().ok_or_else(|| "leeres Dokument".to_string())
+    root.children.into_iter().next().ok_or_else(|| crate::i18n::tl("leeres Dokument").to_string())
 }

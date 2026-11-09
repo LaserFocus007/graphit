@@ -16,7 +16,7 @@ strip "$ROOT/usr/bin/graphit"
 install -Dm644 data/io.github.graphit.desktop "$ROOT/usr/share/applications/io.github.graphit.desktop"
 install -Dm644 data/io.github.graphit.svg "$ROOT/usr/share/icons/hicolor/scalable/apps/io.github.graphit.svg"
 install -Dm644 data/io.github.graphit.mime.xml "$ROOT/usr/share/mime/packages/io.github.graphit.xml"
-install -Dm755 tools/install-stimme.sh "$ROOT/usr/share/graphit/install-stimme.sh"
+install -Dm755 tools/install-voice.sh "$ROOT/usr/share/graphit/install-voice.sh"
 install -Dm644 LICENSE "$ROOT/usr/share/doc/graphit/copyright"
 # Abhängigkeiten aus dem fertigen Programm ableiten
 WORK=$(mktemp -d)
@@ -38,10 +38,10 @@ Installed-Size: $SIZE
 Depends: $DEPENDS
 Recommends: glib-networking, poppler-utils, pandoc, texlive-latex-base, texlive-latex-recommended, texlive-fonts-recommended, alsa-utils
 Suggests: speech-dispatcher
-Description: Handschriftliche Notizen und PDF-Annotation
- Notiz-App für Stift und Touchscreen, kompatibel mit Xournal++-Dateien.
- Optional mit Claude Code als Lernhilfe direkt auf der Seite.
+Description: Handwritten notes and PDF annotation
+ Note-taking app for pen and touchscreen, compatible with Xournal++ files.
+ Optionally uses Claude Code as a study companion right on the page.
 CONTROL
 OUT="graphit_${VERSION}_amd64.deb"
 dpkg-deb --root-owner-group --build "$ROOT" "$OUT"
-echo "Fertig: $OUT"
+echo "Done: $OUT"
