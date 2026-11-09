@@ -161,6 +161,10 @@ fn test_hooks(w: &std::rc::Rc<window::Win>) {
         let w = w.clone();
         glib::timeout_add_local_once(std::time::Duration::from_millis(ms + 2500), move || w.claude.ask(""));
     }
+    if let Some(ms) = std::env::var("GRAPHIT_CLAUDE_PEN").ok().and_then(|v| v.parse::<u64>().ok()) {
+        let w = w.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || w.claude.test_pen());
+    }
     // "ms|Seite|Pfad": Quelle wie über ihren Knopf öffnen
     if let Ok(v) = std::env::var("GRAPHIT_CLAUDE_SOURCE") {
         let parts: Vec<String> = v.splitn(3, '|').map(String::from).collect();

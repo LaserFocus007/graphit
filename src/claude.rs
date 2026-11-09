@@ -1568,33 +1568,85 @@ impl ClaudePanel {
             cr.set_source_rgb(0.945, 0.941, 0.929);
             draw_strokes(cr, &strokes.borrow(), 2.2);
         });
-        let g = gtk::GestureDrag::new();
-        g.set_button(0);
+        // Direkt statt über eine Geste: Die Geste merkt sich das erste Gerät und ignoriert den
+        // Stift, solange die Hand auf dem Feld liegt.
+        let input = gtk::EventControllerLegacy::new();
         let w = Rc::downgrade(self);
-        g.connect_drag_begin(move |g, x, y| {
-            let Some(p) = w.upgrade() else { return };
-            if g.device().is_some_and(|d| d.source() == gdk::InputSource::Touchscreen) {
-                g.set_state(gtk::EventSequenceState::Denied);
-                return;
+        let writing = Cell::new(false);
+        input.connect_event(move |_, ev| {
+            use gdk::EventType as E;
+            let Some(p) = w.upgrade() else { return glib::Propagation::Proceed };
+            let et = ev.event_type();
+            if matches!(et, E::TouchBegin | E::TouchUpdate | E::TouchEnd | E::TouchCancel) {
+                return glib::Propagation::Stop;
             }
-            g.set_state(gtk::EventSequenceState::Claimed);
-            p.strokes.borrow_mut().push(vec![(x, y)]);
-            p.pad.queue_draw();
-            p.update_bar();
-        });
-        let w = Rc::downgrade(self);
-        g.connect_drag_update(move |g, dx, dy| {
-            let (Some(p), Some((sx, sy))) = (w.upgrade(), g.start_point()) else { return };
-            if let Some(s) = p.strokes.borrow_mut().last_mut() {
-                s.push((sx + dx, sy + dy));
+            if !matches!(et, E::ButtonPress | E::MotionNotify | E::ButtonRelease) {
+                return glib::Propagation::Proceed;
             }
-            p.pad.queue_draw();
+            if ev.is_pointer_emulated() || ev.device().is_some_and(|d| d.source() == gdk::InputSource::Touchscreen) {
+                return glib::Propagation::Stop;
+            }
+            match et {
+                E::ButtonPress if ev.downcast_ref::<gdk::ButtonEvent>().is_some_and(|b| b.button() == gdk::BUTTON_PRIMARY) => {
+                    let Some(at) = p.pad_point(ev) else { return glib::Propagation::Stop };
+                    writing.set(true);
+                    p.strokes.borrow_mut().push(vec![at]);
+                    p.pad.queue_draw();
+                    p.update_bar();
+                }
+                E::MotionNotify if writing.get() => {
+                    // das Loslassen kann verloren gehen, etwa wenn ein Dialog aufgeht
+                    if !ev.modifier_state().contains(gdk::ModifierType::BUTTON1_MASK) {
+                        writing.set(false);
+                    } else if let Some(at) = p.pad_point(ev) {
+                        if let Some(s) = p.strokes.borrow_mut().last_mut() {
+                            s.push(at);
+                        }
+                        p.pad.queue_draw();
+                    }
+                }
+                E::ButtonRelease => writing.set(false),
+                _ => return glib::Propagation::Proceed,
+            }
+            glib::Propagation::Stop
         });
-        self.pad.add_controller(g);
+        self.pad.add_controller(input);
         let w = Rc::downgrade(self);
         clear.connect_clicked(move |_| {
             if let Some(p) = w.upgrade() {
                 p.clear_pad();
+            }
+        });
+    }
+
+    /// Fensterkoordinaten eines Ereignisses im Schreibfeld.
+    fn pad_point(&self, ev: &gdk::Event) -> Option<(f64, f64)> {
+        let (x, y) = ev.position()?;
+        let native = self.pad.native()?;
+        let (sx, sy) = native.surface_transform();
+        let p = native.compute_point(&self.pad, &gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32))?;
+        Some((p.x() as f64, p.y() as f64))
+    }
+
+    /// Testhilfe: öffnet das Schreibfeld, nennt seine Lage und später die Striche darin.
+    pub fn test_pen(self: &Rc<Self>) {
+        self.pen_btn.set_active(true);
+        let w = Rc::downgrade(self);
+        glib::timeout_add_local_once(Duration::from_millis(800), move || {
+            let Some(p) = w.upgrade() else { return };
+            let Some(root) = p.pad.root() else { return };
+            if let Some(at) = p.pad.compute_point(&root, &gtk::graphene::Point::new(0.0, 0.0)) {
+                let (sx, sy) = p.pad.native().map_or((0.0, 0.0), |n| n.surface_transform());
+                eprintln!("PEN Feld {} {} {} {}", (at.x() as f64 + sx) as i32, (at.y() as f64 + sy) as i32, p.pad.width(), p.pad.height());
+            }
+        });
+        let w = Rc::downgrade(self);
+        glib::timeout_add_local_once(Duration::from_secs(9), move || {
+            if let Some(p) = w.upgrade() {
+                let strokes = p.strokes.borrow();
+                let pts: Vec<_> = strokes.iter().flatten().collect();
+                let inside = pts.iter().filter(|a| a.0 >= 0.0 && a.1 >= 0.0 && a.0 <= p.pad.width() as f64 && a.1 <= p.pad.height() as f64).count();
+                eprintln!("PEN Striche {} Punkte {} davon im Feld {} {:?}", strokes.len(), pts.len(), inside, strokes.iter().map(|s| (s.first().copied(), s.last().copied())).collect::<Vec<_>>());
             }
         });
     }
