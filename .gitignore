@@ -1,0 +1,5 @@
+/target
+*.deb
+# nur für einen bestimmten Laptop
+/tools/stift-latenz.sh
+/tools/install-stift-latenz.sh

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Graphit
+Comment=Handschriftliche Notizen und PDF-Annotation
+Exec=graphit %F
+Icon=io.github.graphit
+Terminal=false
+Type=Application
+Categories=Office;Education;Graphics;
+MimeType=application/x-xopp;application/pdf;
+StartupWMClass=io.github.graphit
