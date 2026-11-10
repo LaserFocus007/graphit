@@ -65,7 +65,7 @@ fn main() -> glib::ExitCode {
     }
 
     // Testläufe nie an eine laufende Instanz weiterreichen
-    let testing = ["GRAPHIT_SELFTEST", "GRAPHIT_PROFILE", "GRAPHIT_ACTION", "GRAPHIT_VIEWER", "GRAPHIT_VIEWER2", "GRAPHIT_DARK", "GRAPHIT_PENLOG", "GRAPHIT_TABS", "GRAPHIT_CLAUDE", "GRAPHIT_CLAUDE_PIN", "GRAPHIT_CLAUDE_NEXT", "GRAPHIT_CLAUDE_PAD", "GRAPHIT_CLAUDE_SOURCE", "GRAPHIT_TOOL_ASK", "GRAPHIT_TOUR", "GRAPHIT_WELCOME", "GRAPHIT_UPDATE"].iter().any(|v| std::env::var(v).is_ok());
+    let testing = ["GRAPHIT_SELFTEST", "GRAPHIT_PROFILE", "GRAPHIT_ACTION", "GRAPHIT_VIEWER", "GRAPHIT_VIEWER2", "GRAPHIT_DARK", "GRAPHIT_PENLOG", "GRAPHIT_TABS", "GRAPHIT_CLAUDE", "GRAPHIT_CLAUDE_PIN", "GRAPHIT_CLAUDE_NEXT", "GRAPHIT_CLAUDE_PAD", "GRAPHIT_CLAUDE_SOURCE", "GRAPHIT_TOOL_ASK", "GRAPHIT_TOUR", "GRAPHIT_WELCOME", "GRAPHIT_UPDATE", "GRAPHIT_LECTURE"].iter().any(|v| std::env::var(v).is_ok());
     let mut flags = gio::ApplicationFlags::HANDLES_OPEN;
     if testing {
         flags |= gio::ApplicationFlags::NON_UNIQUE;
@@ -166,6 +166,18 @@ fn test_hooks(w: &std::rc::Rc<window::Win>) {
         glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || w2.claude.test_pad());
         let w = w.clone();
         glib::timeout_add_local_once(std::time::Duration::from_millis(ms + 2500), move || w.claude.ask(""));
+    }
+    // "ms:Variante": Vorlesungsdurchgang ab Seite 1 starten; "ms:wahl" zeigt die Auswahl
+    if let Some((ms, what)) = std::env::var("GRAPHIT_LECTURE").ok().and_then(|v| v.split_once(':').map(|(a, b)| (a.parse().unwrap_or(0), b.to_string()))) {
+        let w = w.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || match what.parse::<usize>() {
+            Ok(k) => w.claude.test_lecture(1, k),
+            Err(_) => w.claude.test_lecture_kinds(),
+        });
+    }
+    if std::env::var("GRAPHIT_ADAPTIVE").is_ok() {
+        let w = w.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(2600), move || w.claude.test_adaptive());
     }
     if let Some(ms) = std::env::var("GRAPHIT_CLAUDE_PEN").ok().and_then(|v| v.parse::<u64>().ok()) {
         let w = w.clone();

@@ -2,6 +2,7 @@
 //! der Seite. Sie gehören nicht zum Dokument und werden nie gespeichert.
 
 use std::f64::consts::TAU;
+use std::rc::Rc;
 
 use adw::prelude::AnimationExt;
 
@@ -57,6 +58,10 @@ pub struct Guide {
     pub sketch: Vec<Vec<Pt>>,
     /// 0…1: wie weit alles schon gezeichnet ist
     pub progress: f64,
+    /// Ziel der Ansicht, solange sie noch dorthin gleitet
+    rest: Option<Pt>,
+    /// Stirbt mit diesem Zeichen, damit eine alte Animation die Ansicht nicht mehr bewegt
+    _alive: Rc<()>,
 }
 
 const INK: gdk::RGBA = gdk::RGBA::new(0.85, 0.42, 0.28, 1.0);
@@ -198,33 +203,52 @@ impl Canvas {
 
     /// Zeichen zeigen: Ansicht gleitet zur Stelle, die Zeichen zeichnen sich selbst.
     pub fn show_guide(&self, page: usize, marks: Vec<Mark>, links: Vec<(usize, usize)>, sketch: Vec<Vec<Pt>>) {
-        let (from, to) = {
+        let (from, to, alive) = {
             let mut st = self.st();
-            if page >= st.doc.pages.len() {
-                return;
-            }
-            let area = guide_area(&marks, &sketch).unwrap_or(Rect::new(0.0, 0.0, 1.0, 1.0));
-            st.guide = Some(Guide { emphasis: None, page, marks, links, sketch, progress: 0.0 });
+            let Some((pw, ph)) = st.doc.pages.get(page).map(|p| (p.borrow().width, p.borrow().height)) else { return };
             let o = st.page_origin(page);
-            let l = area.translate(o.x, o.y);
             let vis = st.view_layout();
             let mut to = st.cam;
-            if !vis.expand(-40.0 / st.zoom).contains(l.center()) || l.y0 < vis.y0 || l.y1 > vis.y1 {
-                to.y = l.center().y - vis.height() * 0.4;
+            match guide_area(&marks, &sketch) {
+                Some(a) => {
+                    let l = a.translate(o.x, o.y);
+                    let cut_off = l.height() <= vis.height() && (l.y0 < vis.y0 || l.y1 > vis.y1);
+                    if !vis.expand(-40.0 / st.zoom).contains(l.center()) || cut_off {
+                        to.y = l.center().y - vis.height() * 0.4;
+                    }
+                    if l.x0 < vis.x0 || l.x1 > vis.x1 {
+                        to.x = l.center().x - vis.width() / 2.0;
+                    }
+                }
+                // ohne Zeichen gibt es nichts anzusteuern: nur blättern, wenn die Seite kaum zu sehen ist
+                None => {
+                    let seen = (o.y + ph).min(vis.y1) - o.y.max(vis.y0);
+                    if seen < 0.25 * vis.height().min(ph) {
+                        to.y = o.y - 16.0 / st.zoom;
+                        if o.x < vis.x0 || o.x + pw > vis.x1 {
+                            to.x = o.x + pw / 2.0 - vis.width() / 2.0;
+                        }
+                    }
+                }
             }
-            if l.x0 < vis.x0 || l.x1 > vis.x1 {
-                to.x = l.center().x - vis.width() / 2.0;
-            }
-            (st.cam, to)
+            let alive = Rc::new(());
+            st.guide = Some(Guide { emphasis: None, page, marks, links, sketch, progress: 0.0, rest: Some(to), _alive: alive.clone() });
+            (st.cam, to, Rc::downgrade(&alive))
         };
         let w = self.downgrade();
         let target = adw::CallbackAnimationTarget::new(move |v| {
-            let Some(c) = w.upgrade() else { return };
+            let Some(c) = w.upgrade().filter(|_| alive.strong_count() > 0) else { return };
             {
-                let mut st = c.st();
-                st.cam = Pt::new(from.x + (to.x - from.x) * (v / 0.45).min(1.0), from.y + (to.y - from.y) * (v / 0.45).min(1.0));
-                if let Some(g) = &mut st.guide {
-                    g.progress = ((v - 0.3) / 0.7).clamp(0.0, 1.0);
+                let mut guard = c.st();
+                let st = &mut *guard;
+                let Some(g) = &mut st.guide else { return };
+                g.progress = ((v - 0.3) / 0.7).clamp(0.0, 1.0);
+                if g.rest.is_some() {
+                    let t = (v / 0.45).min(1.0);
+                    st.cam = Pt::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+                    if t >= 1.0 {
+                        g.rest = None;
+                    }
                 }
             }
             c.changed();
@@ -271,6 +295,38 @@ impl Canvas {
             self.changed();
         }
         any
+    }
+
+    /// Zeichen einzeln in Seitenkoordinaten (mit Schild oder ohne) und Punkte auf ihren Verbindungen.
+    pub fn guide_shapes(&self) -> (Vec<(Rect, bool)>, Vec<Pt>) {
+        let st = self.st();
+        let Some(g) = &st.guide else { return (Vec::new(), Vec::new()) };
+        let marks = g.marks.iter().flat_map(|m| m.rects.iter().map(|r| (*r, m.label.is_some())));
+        let sketch = g.sketch.iter().filter_map(|l| Rect::bounding(l)).map(|r| (r, false));
+        let shapes = marks.chain(sketch).collect();
+        let whole = |i: usize| g.marks.get(i).and_then(|m| m.rects.iter().copied().reduce(|a, b| a.union(&b)));
+        let links = g
+            .links
+            .iter()
+            .filter_map(|(a, b)| Some((whole(*a)?.center(), whole(*b)?.center())))
+            .flat_map(|(a, b)| (1..12).map(move |k| a.lerp(b, k as f64 / 12.0)))
+            .collect();
+        (shapes, links)
+    }
+
+    /// Um wie viele Pixel die Zeichen noch rücken, bis die Ansicht angekommen ist.
+    pub fn guide_rest_shift(&self) -> (f64, f64) {
+        let st = self.st();
+        st.guide.as_ref().and_then(|g| g.rest).map_or((0.0, 0.0), |r| ((st.cam.x - r.x) * st.zoom, (st.cam.y - r.y) * st.zoom))
+    }
+
+    /// Steht die Ansicht schon an der Stelle der Zeichen?
+    pub fn guide_settled(&self) -> bool {
+        self.st().guide.as_ref().is_none_or(|g| g.rest.is_none())
+    }
+
+    pub fn zoom(&self) -> f64 {
+        self.st().zoom
     }
 
     /// Rechteck der Zeichen im Widget, auch wenn es gerade außerhalb liegt.

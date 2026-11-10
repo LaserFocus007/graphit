@@ -186,6 +186,21 @@ pub struct Slider {
     pub value: f64,
 }
 
+/// Punktfolge, die sich Schritt für Schritt aufbaut, etwa ein Zeitschrittverfahren.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sequence {
+    pub name: String,
+    pub x0: Expr,
+    pub y0: Expr,
+    pub next_x: Expr,
+    pub next_y: Expr,
+    pub count: Expr,
+}
+
+/// Name des aktuellen Folgenschritts in den Werten des Diagramms.
+pub const STEP: &str = "_schritt";
+const MAX_SEQUENCE: usize = 400;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plot {
     pub title: String,
@@ -195,6 +210,9 @@ pub struct Plot {
     pub y: Option<(f64, f64)>,
     pub curves: Vec<(String, Expr)>,
     pub sliders: Vec<Slider>,
+    pub sequence: Option<Sequence>,
+    /// Regler, den der Abspielen-Knopf einmal durchfährt
+    pub animate: Option<String>,
 }
 
 /// `None`, wenn das Diagramm unvollständig ist oder Formeln unbekannte Größen nutzen.
@@ -219,8 +237,9 @@ pub fn from_json(v: &Value) -> Option<Plot> {
             })
         })
         .collect();
-    let curves: Vec<(String, Expr)> = v["kurven"].as_array()?.iter().take(4).filter_map(|c| Some((c["name"].as_str().unwrap_or("").to_string(), parse(c["formel"].as_str()?).ok()?))).collect();
-    if curves.is_empty() {
+    let curves: Vec<(String, Expr)> = v["kurven"].as_array().into_iter().flatten().take(4).filter_map(|c| Some((c["name"].as_str().unwrap_or("").to_string(), parse(c["formel"].as_str()?).ok()?))).collect();
+    let sequence = sequence_from_json(&v["folge"]);
+    if curves.is_empty() && sequence.is_none() {
         return None;
     }
     let known = |n: &String| n == "x" || sliders.iter().any(|s| &s.symbol == n);
@@ -231,6 +250,17 @@ pub fn from_json(v: &Value) -> Option<Plot> {
             return None;
         }
     }
+    if let Some(q) = &sequence {
+        let known = |n: &String| matches!(n.as_str(), "x" | "y" | "k") || sliders.iter().any(|s| &s.symbol == n);
+        for e in [&q.x0, &q.y0, &q.next_x, &q.next_y, &q.count] {
+            let mut used = Vec::new();
+            e.vars_into(&mut used);
+            if !used.iter().all(known) {
+                return None;
+            }
+        }
+    }
+    let animate = v["animiere"].as_str().filter(|a| sliders.iter().any(|s| s.symbol == *a)).map(str::to_string);
     Some(Plot {
         title: v["titel"].as_str().unwrap_or("").to_string(),
         x_name: v["x"]["name"].as_str().unwrap_or("x").to_string(),
@@ -239,11 +269,56 @@ pub fn from_json(v: &Value) -> Option<Plot> {
         y: range(&v["y"]["min"], &v["y"]["max"]),
         curves,
         sliders,
+        sequence,
+        animate,
+    })
+}
+
+fn sequence_from_json(v: &Value) -> Option<Sequence> {
+    let start = v["start"].as_array().filter(|a| a.len() == 2)?;
+    let expr = |e: &Value| match e {
+        Value::Number(n) => n.as_f64().map(Expr::Num),
+        Value::String(t) => parse(t).ok(),
+        _ => None,
+    };
+    Some(Sequence {
+        name: v["name"].as_str().unwrap_or("").to_string(),
+        x0: expr(&start[0])?,
+        y0: expr(&start[1])?,
+        next_x: expr(&v["x"])?,
+        next_y: expr(&v["y"])?,
+        count: expr(&v["schritte"])?,
     })
 }
 
 pub fn initial_values(p: &Plot) -> HashMap<String, f64> {
-    p.sliders.iter().map(|s| (s.symbol.clone(), s.value)).collect()
+    let mut values: HashMap<String, f64> = p.sliders.iter().map(|s| (s.symbol.clone(), s.value)).collect();
+    if p.sequence.is_some() {
+        values.insert(STEP.to_string(), 0.0);
+    }
+    values
+}
+
+/// Anzahl der Schritte der Folge bei diesen Werten.
+pub fn sequence_len(q: &Sequence, values: &HashMap<String, f64>) -> usize {
+    let n = q.count.eval(values);
+    if n.is_finite() && n > 0.0 { (n.round() as usize).min(MAX_SEQUENCE) } else { 0 }
+}
+
+/// Punkte der Folge bis einschließlich Schritt `upto`.
+pub fn sequence_points(q: &Sequence, values: &HashMap<String, f64>, upto: usize) -> Vec<(f64, f64)> {
+    let mut vars = values.clone();
+    let (mut x, mut y) = (q.x0.eval(&vars), q.y0.eval(&vars));
+    let mut out = vec![(x, y)];
+    for k in 0..upto.min(sequence_len(q, values)) {
+        vars.insert("x".to_string(), x);
+        vars.insert("y".to_string(), y);
+        vars.insert("k".to_string(), k as f64);
+        let (nx, ny) = (q.next_x.eval(&vars), q.next_y.eval(&vars));
+        (x, y) = (nx, ny);
+        out.push((x, y));
+    }
+    out
 }
 
 const SAMPLES: usize = 240;
@@ -272,6 +347,14 @@ fn y_range(p: &Plot, start: &HashMap<String, f64>, now: &HashMap<String, f64>) -
                     lo = lo.min(y);
                     hi = hi.max(y);
                 }
+            }
+        }
+    }
+    if let Some(q) = &p.sequence {
+        for (_, y) in sequence_points(q, now, MAX_SEQUENCE) {
+            if y.is_finite() {
+                lo = lo.min(y);
+                hi = hi.max(y);
             }
         }
     }
@@ -360,7 +443,8 @@ pub fn draw(cr: &cairo::Context, w: f64, h: f64, p: &Plot, start: &HashMap<Strin
     let _ = cr.save();
     cr.rectangle(x0, y0, x1 - x0, y1 - y0);
     cr.clip();
-    let changed = start != now;
+    let without_step = |m: &HashMap<String, f64>| m.iter().filter(|(k, _)| k.as_str() != STEP).map(|(k, v)| (k.clone(), v.to_bits())).collect::<HashMap<_, _>>();
+    let changed = without_step(start) != without_step(now);
     for (i, (_, e)) in p.curves.iter().enumerate() {
         let c = COLORS[i % COLORS.len()];
         let stroke = |vals: &HashMap<String, f64>, dash: bool| {
@@ -391,6 +475,22 @@ pub fn draw(cr: &cairo::Context, w: f64, h: f64, p: &Plot, start: &HashMap<Strin
         stroke(now, false);
     }
     cr.set_dash(&[], 0.0);
+    if let Some(q) = &p.sequence {
+        let upto = now.get(STEP).copied().unwrap_or(0.0).max(0.0) as usize;
+        let points: Vec<(f64, f64)> = sequence_points(q, now, upto).into_iter().filter(|a| a.0.is_finite() && a.1.is_finite()).collect();
+        let c = COLORS[1];
+        cr.set_source_rgb(c.0, c.1, c.2);
+        cr.set_line_width(1.6);
+        for (i, a) in points.iter().enumerate() {
+            if i == 0 { cr.move_to(sx(a.0), sy(a.1)) } else { cr.line_to(sx(a.0), sy(a.1)) }
+        }
+        let _ = cr.stroke();
+        for (i, a) in points.iter().enumerate() {
+            let radius = if i + 1 == points.len() { 5.0 } else { 2.8 };
+            cr.arc(sx(a.0), sy(a.1), radius, 0.0, std::f64::consts::TAU);
+            let _ = cr.fill();
+        }
+    }
     let _ = cr.restore();
     // Legende bei mehreren Kurven
     if p.curves.len() > 1 {
@@ -460,6 +560,21 @@ mod tests {
         let bad = json!({"x":{"min":0,"max":1},"kurven":[{"formel":"b*x"}]});
         assert!(from_json(&bad).is_none());
         assert!(from_json(&json!({"x":{"min":1,"max":0},"kurven":[{"formel":"x"}]})).is_none());
+    }
+
+    #[test]
+    fn sequence_steps_forward() {
+        let v = json!({"x":{"min":0,"max":1},"regler":[{"symbol":"h","min":0.1,"max":1,"wert":0.5}],
+            "folge":{"name":"Euler","start":[0,1],"x":"x+h","y":"y+h*y","schritte":"1/h"},"animiere":"h"});
+        let p = from_json(&v).unwrap();
+        assert_eq!(p.animate.as_deref(), Some("h"));
+        let q = p.sequence.as_ref().unwrap();
+        let values = initial_values(&p);
+        assert_eq!(values[STEP], 0.0);
+        assert_eq!(sequence_len(q, &values), 2);
+        assert_eq!(sequence_points(q, &values, 9), [(0.0, 1.0), (0.5, 1.5), (1.0, 2.25)]);
+        let unknown = json!({"x":{"min":0,"max":1},"folge":{"start":[0,1],"x":"x+q","y":"y","schritte":3}});
+        assert!(from_json(&unknown).is_none());
     }
 
     #[test]

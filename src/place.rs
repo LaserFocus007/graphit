@@ -413,6 +413,54 @@ fn tight_box(w: usize, h: usize, dark: impl Fn(usize, usize) -> bool, r: [usize;
     Some([x0, y0, x1, y1])
 }
 
+/// Wo auf einer Seite Inhalt steht, in Zellen mit Summentabelle für schnelle Flächenabfragen.
+pub struct InkMap {
+    cols: usize,
+    rows: usize,
+    sum: Vec<u32>,
+}
+
+/// Zellgröße in Punkten: grob genug, dass ein Wort als volle Fläche zählt.
+const INK_CELL: f64 = 3.0;
+
+impl InkMap {
+    fn from_cells(cols: usize, rows: usize, full: impl Fn(usize, usize) -> bool) -> InkMap {
+        let mut sum = vec![0u32; (cols + 1) * (rows + 1)];
+        for y in 0..rows {
+            for x in 0..cols {
+                let i = (y + 1) * (cols + 1) + x + 1;
+                sum[i] = full(x, y) as u32 + sum[i - 1] + sum[i - cols - 1] - sum[i - cols - 2];
+            }
+        }
+        InkMap { cols, rows, sum }
+    }
+
+    /// Breite der Seite in Punkten.
+    pub fn width(&self) -> f64 {
+        self.cols as f64 * INK_CELL
+    }
+
+    /// Fläche mit Inhalt innerhalb von `r`, in Punkten².
+    pub fn covered(&self, r: &Rect) -> f64 {
+        let cell = |v: f64, max: usize| ((v / INK_CELL).max(0.0) as usize).min(max);
+        let (x0, y0) = (cell(r.x0, self.cols), cell(r.y0, self.rows));
+        let (x1, y1) = (cell(r.x1.ceil() + INK_CELL - 1.0, self.cols), cell(r.y1.ceil() + INK_CELL - 1.0, self.rows));
+        let at = |x: usize, y: usize| self.sum[y * (self.cols + 1) + x] as f64;
+        (at(x1, y1) + at(x0, y0) - at(x0, y1) - at(x1, y0)) * INK_CELL * INK_CELL
+    }
+}
+
+/// Alles Sichtbare einer Seite: PDF, Bilder, Text und Striche.
+pub fn ink_map(page: &PageData) -> Option<InkMap> {
+    let (w, h, stride, data) = raster(page, 1.0, true)?;
+    let step = INK_CELL as usize;
+    let (cols, rows) = (w.div_ceil(step), h.div_ceil(step));
+    let dark = |x: usize, y: usize| luma(&data[y * stride + x * 4..y * stride + x * 4 + 3]) < 190.0;
+    Some(InkMap::from_cells(cols, rows, |cx, cy| {
+        (cy * step..((cy + 1) * step).min(h)).any(|y| (cx * step..((cx + 1) * step).min(w)).any(|x| dark(x, y)))
+    }))
+}
+
 /// Grobe Bereiche an den Inhalt der Seite anlegen. Ohne Inhalt darin bleibt der Bereich.
 pub fn snap_to_content(page: &PageData, areas: &[Rect]) -> Vec<Rect> {
     const SCALE: f64 = 3.0;
@@ -864,6 +912,14 @@ mod tests {
         let r = parse_request(r#"{"rueckgaengig":true,"geometrie":[5]}"#).unwrap();
         assert!(r.undo);
         assert_eq!(r.geometry, [4]);
+    }
+
+    #[test]
+    fn ink_map_counts_areas() {
+        let m = InkMap::from_cells(10, 10, |x, y| x < 2 && y < 3);
+        assert_eq!(m.covered(&Rect::new(0.0, 0.0, 30.0, 30.0)), 6.0 * 9.0);
+        assert_eq!(m.covered(&Rect::new(6.0, 0.0, 30.0, 30.0)), 0.0);
+        assert_eq!(m.covered(&Rect::new(-50.0, -50.0, 3.0, 3.0)), 9.0);
     }
 
     #[test]

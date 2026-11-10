@@ -99,6 +99,10 @@ button.fk-claude-thumb picture { border-radius: 8px; }
 button.fk-claude-insert { padding: 2px 9px; margin-left: -9px; min-height: 26px; border-radius: 8px; color: #a9a7a2; }
 button.fk-claude-insert:hover { background-color: alpha(white, .08); color: #f1f0ed; }
 .fk-claude-guide { padding: 12px 14px 10px; border-radius: 16px; }
+.fk-claude-kind-detail { font-size: 0.82em; opacity: 0.62; }
+.fk-claude-idea { min-height: 38px; padding: 5px 7px; border-radius: 10px; font-size: 0.86em; background-color: #2c2c31; color: #f1f0ed; }
+.fk-claude-idea:hover { background-color: #3a3a41; }
+.fk-claude-idea-on { background-color: #d97757; color: #1f1f23; }
 .fk-claude-kind { font-weight: 600; font-size: .88em; color: #a9a7a2; }
 .fk-claude-count { color: #8d8b86; font-size: .88em; }
 .fk-claude-seg { min-height: 3px; border-radius: 2px; background-color: alpha(white, .14); }
@@ -449,6 +453,22 @@ impl Win {
             _ => glib::Propagation::Proceed,
         });
         win.window.add_controller(keys);
+
+        // Pfeile vor allen anderen, sonst schluckt sie ein fokussierter Regler auf der Karte.
+        // Eine Auswahl oder ein offenes Textfeld auf der Notiz behält sie.
+        let arrows = gtk::EventControllerKey::new();
+        arrows.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = Rc::downgrade(&win);
+        arrows.connect_key_pressed(move |_, key, _, mods| {
+            let Some(w) = w.upgrade() else { return glib::Propagation::Proceed };
+            let editing = w.view().is_some_and(|v| v.canvas.has_selection() || v.canvas.st().text.is_some());
+            if !editing && w.claude.key_arrow(key, mods) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        win.window.add_controller(arrows);
 
         let w = Rc::downgrade(&win);
         win.tabs.connect_selected_page_notify(move |_| {

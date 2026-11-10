@@ -321,6 +321,12 @@ struct Conv {
     /// (Dokument, Stand), für den die PDFs aktuell sind
     exported: RefCell<Option<(Option<PathBuf>, u64)>>,
     exporting: Rc<Cell<u32>>,
+    /// läuft gerade ein Vorlesungsdurchgang, der eine Führung liefern muss
+    lecture: Cell<bool>,
+    /// zweiter Versuch, nachdem die Führung gefehlt hat
+    repairing: Cell<bool>,
+    /// neue Schritte kommen hinter diesen Schritt der laufenden Führung
+    insert_at: Cell<Option<usize>>,
     /// Führung, die wartet, bis ihr Tab wieder offen ist
     pending_tour: RefCell<(Vec<Step>, Vec<String>)>,
     /// Tokens, die der letzte Aufruf mitgeschickt hat
@@ -368,6 +374,9 @@ impl Conv {
             unread: Cell::new(false),
             exported: RefCell::new(None),
             exporting: Rc::new(Cell::new(0)),
+            lecture: Cell::new(false),
+            repairing: Cell::new(false),
+            insert_at: Cell::new(None),
             pending_tour: RefCell::new(Default::default()),
             context: Cell::new(std::fs::read_to_string(data.join(CONTEXT_FILE)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)),
             memory: RefCell::new(std::fs::read_to_string(data.join(MEMORY_FILE)).ok().filter(|m| !m.trim().is_empty())),
@@ -456,9 +465,44 @@ fn strip_math(s: &str) -> String {
     s.replace('$', "").replace("\\", "")
 }
 
-fn lecture_prompt(start: usize) -> String {
-    crate::tr!("Vorlesungsmodus: Führe mich durch den nächsten Abschnitt dieser Notiz ab Seite {start}. Nimm 3 bis 5 zusammengehörende Seiten und mache daraus eine Führung, jeder Schritt mit seite, am Ende ein kurzes Quiz. Beende deine Antwort mit ⟦weiter: N⟧, wobei N die erste Seite des nächsten Abschnitts ist, oder mit ⟦weiter: ende⟧, wenn die Notiz zu Ende ist.", "Lecture mode: walk me through the next section of this note from page {start}. Take 3 to 5 related pages and turn them into a walkthrough, each step with its page, ending with a short quiz. End your answer with ⟦weiter: N⟧, where N is the first page of the next section, or with ⟦weiter: ende⟧ when the note is finished.")
-}
+const LECTURE_GUIDE_FILE: &str = "vorlesung-anleitung.md";
+const LECTURE_KIND_FILE: &str = "vorlesung-art";
+
+/// Varianten des Vorlesungsdurchgangs: Name, Beschreibung, Anweisung an Claude.
+const LECTURE_KINDS: [(&str, &str, &str); 4] = [
+    ("Grundverständnis", "Intuition und roter Faden, jede Idee an einem Beispiel", "Variante Grundverständnis: Intuition und roter Faden vor Formalismus. Jede Idee an einem kleinen konkreten Beispiel, Formeln nur soweit nötig, keine Beweise."),
+    ("Tiefe Theorie", "Herleitungen, Annahmen und warum etwas gilt", "Variante Tiefe Theorie: Herleitungen Schritt für Schritt, Annahmen, Beweisideen, warum etwas gilt und wann es scheitert. Nimm jede zentrale Formel mit terme auseinander."),
+    ("Prüfungsvorbereitung", "Rechenschemata, typische Aufgaben und Fehler", "Variante Prüfungsvorbereitung: Rechenschemata, typische Aufgabentypen, häufige Fehler. Nutze Altklausuren aus dem Index mit Quelle, wenn es welche gibt. Viele aufgabe und quiz."),
+    ("Schnellüberblick", "Die wichtigsten Aussagen in zwei bis drei Minuten", "Variante Schnellüberblick: Nach der Landkarte nur 3 bis 5 Schritte mit den wichtigsten Aussagen, keine aufgabe."),
+];
+
+/// Liegt als Datei im Cache und wird nur im Vorlesungsmodus gelesen, das spart Kontext.
+const LECTURE_GUIDE: &str = r#"# Interaktiver Vorlesungsdurchgang
+
+Das Ergebnis ist ausschließlich die Datei CACHE/fuehrung.json. Der Nutzer will keinen Fließtext: Erkläre nichts im Chat. Deine Antwort besteht aus höchstens einem Satz und der Marke ⟦weiter: N⟧ (erste Seite des nächsten Abschnitts) oder ⟦weiter: ende⟧.
+
+Lies die Seiten mit pdftotext, damit suche wörtlich trifft. Aufbau wie im Systemprompt beschrieben, mit diesen Ergänzungen:
+
+## Ablauf (8 bis 14 Schritte, außer die Variante sagt anderes)
+1. Der erste Schritt hat immer eine landkarte. Danach geht es Idee für Idee durch das Skript.
+2. Jeder Schritt zeigt auf genau eine Stelle (marken mit suche) und hat höchstens zwei kurze Sätze in text. Eine Idee pro Schritt.
+3. Mindestens die Hälfte der Schritte hat denken: Der Nutzer überlegt zuerst, text erscheint erst danach. Frage nach dem nächsten logischen Schritt, einer Vorhersage oder dem Warum, nie nach reinem Abschreiben.
+4. Zentrale Formeln bekommen terme: jeder Term einzeln mit Bedeutung und Herkunft, statt die Formel im Fließtext zu erklären.
+5. Hängt etwas von einem Parameter ab oder läuft etwas schrittweise oder über die Zeit ab, gehört ein diagramm dazu, mit regler, möglichst mit folge oder animiere.
+6. Der letzte Schritt hat quiz oder aufgabe.
+
+## Neue Felder eines Schritts
+"denken": {"frage":"Was passiert mit dem Fehler, wenn h halbiert wird?","optionen":["Halbiert sich","Viertelt sich"],"richtig":0}
+optionen und richtig sind freiwillig; ohne optionen deckt ein Knopf die Erklärung auf. Text und Diagramm erscheinen erst danach, also nimm die Antwort in frage und optionen nicht vorweg.
+
+"landkarte": {"ideen":[{"id":"a","titel":"Zeitgitter","text":"Ein Satz zur Idee.","seite":1,"suche":"wörtlicher PDF-Text"}],"verbindungen":[["a","b","liefert"]]}
+Höchstens 8 Ideen, titel höchstens drei Wörter. Die verbindungen sagen, wie die Ideen aufeinander aufbauen, mit einem kurzen Wort. Tippt der Nutzer eine Idee an, springt Graphit zu ihrer Stelle.
+
+## Animierte Diagramme
+Im diagramm zusätzlich:
+"animiere":"h"  ein Reglersymbol: Der Abspielen-Knopf fährt diesen Regler einmal durch.
+"folge":{"name":"Euler","start":[0,1],"x":"x+h","y":"y+h*y","schritte":"1/h"}  Punkte, die sich Schritt für Schritt aufbauen, für Zeitschrittverfahren, Iterationen und Rekursionen. In x, y und schritte stehen die Formelsprache, die Reglersymbole, x und y (aktueller Punkt) und k (Schrittnummer ab 0). Passt die exakte Lösung, gehört sie als kurven dazu, damit der Unterschied sichtbar wird. kurven darf bei einer folge fehlen.
+"#;
 
 fn short_title(q: &str) -> String {
     let line = q.lines().next().unwrap_or("").trim();
@@ -516,6 +560,81 @@ pub struct Step {
     task: Option<String>,
     terms: Vec<Term>,
     plot: Option<Plot>,
+    think: Option<Think>,
+    map: Option<IdeaMap>,
+}
+
+/// Erst überlegen, dann erscheint der Text des Schritts.
+#[derive(Clone, Debug, PartialEq)]
+struct Think {
+    question: String,
+    options: Vec<String>,
+    right: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Idea {
+    id: String,
+    title: String,
+    text: String,
+    page: Option<usize>,
+    mark: Option<MarkSpec>,
+}
+
+/// Landkarte eines Abschnitts: Ideen und wie sie aufeinander aufbauen.
+#[derive(Clone, Debug, PartialEq)]
+struct IdeaMap {
+    ideas: Vec<Idea>,
+    /// Von, nach (Index in ideas) und Beschriftung
+    links: Vec<(usize, usize, String)>,
+}
+
+fn parse_think(v: &Value) -> Option<Think> {
+    let options: Vec<String> = v["optionen"].as_array().map(|o| o.iter().filter_map(non_empty).collect()).unwrap_or_default();
+    Some(Think { question: non_empty(&v["frage"])?, right: v["richtig"].as_u64().map(|r| r as usize).filter(|r| *r < options.len()), options })
+}
+
+fn parse_map(v: &Value) -> Option<IdeaMap> {
+    let ideas: Vec<Idea> = v["ideen"]
+        .as_array()?
+        .iter()
+        .take(MAX_IDEAS)
+        .filter_map(|i| {
+            Some(Idea {
+                id: non_empty(&i["id"])?,
+                title: non_empty(&i["titel"])?,
+                text: non_empty(&i["text"]).unwrap_or_default(),
+                page: i["seite"].as_u64().map(|p| (p as usize).saturating_sub(1)),
+                mark: parse_mark(&json!({"zeichen": "rahmen", "suche": i["suche"], "bereich": i["bereich"]})),
+            })
+        })
+        .collect();
+    if ideas.is_empty() {
+        return None;
+    }
+    let at = |v: &Value| v.as_str().and_then(|id| ideas.iter().position(|i| i.id == id));
+    let links = v["verbindungen"].as_array().into_iter().flatten().filter_map(|l| Some((at(&l[0])?, at(&l[1])?, l[2].as_str().unwrap_or("").to_string()))).filter(|l| l.0 != l.1).collect();
+    Some(IdeaMap { ideas, links })
+}
+
+/// Ordnet Ideen in Zeilen: eine Idee steht unter allen, auf denen sie aufbaut.
+fn idea_rows(map: &IdeaMap) -> Vec<Vec<usize>> {
+    let mut depth = vec![0usize; map.ideas.len()];
+    // begrenzte Durchläufe: Kreise in den Verbindungen dürfen nicht hängen bleiben
+    for _ in 0..map.ideas.len() {
+        for (a, b, _) in &map.links {
+            if depth[*b] <= depth[*a] && depth[*a] + 1 < map.ideas.len() {
+                depth[*b] = depth[*a] + 1;
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    for level in 0..=depth.iter().copied().max().unwrap_or(0) {
+        let row: Vec<usize> = (0..map.ideas.len()).filter(|i| depth[*i] == level).collect();
+        rows.extend(row.chunks(IDEAS_PER_ROW).map(<[usize]>::to_vec));
+    }
+    rows.retain(|r| !r.is_empty());
+    rows
 }
 
 fn non_empty(v: &Value) -> Option<String> {
@@ -579,57 +698,82 @@ pub fn parse_tour(json: &str) -> (Vec<Step>, Vec<String>) {
                     })
                     .collect(),
                 plot: plot::from_json(&s["diagramm"]),
+                think: parse_think(&s["denken"]),
+                map: parse_map(&s["landkarte"]),
             })
         })
         .collect();
     (steps, hints)
 }
 
-/// Auf welcher Seite der Stelle die Lernkarte steht.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum CardSide {
-    Right,
-    Left,
-    Below,
-    Above,
+/// Lernkarte ohne Stelle auf der Seite: unten mittig über dem Dock.
+fn free_card_position(card: (f64, f64), view: (f64, f64), bottom: f64) -> (f64, f64) {
+    fit_card(((view.0 - card.0) / 2.0, view.1 - card.1 - bottom - 60.0), card, view, bottom)
 }
 
-/// Wo die Lernkarte hinkommt: neben die Stelle, sonst darunter oder darüber.
-#[cfg(test)]
-pub fn card_position(mark: Option<Rect>, card: (f64, f64), view: (f64, f64), bottom: f64) -> (f64, f64) {
-    card_position_near(mark, card, view, bottom, None).0
+/// Karte vollständig ins Fenster und über das Dock schieben.
+fn fit_card(at: (f64, f64), card: (f64, f64), view: (f64, f64), bottom: f64) -> (f64, f64) {
+    (at.0.clamp(CARD_PAD, (view.0 - card.0 - CARD_PAD).max(CARD_PAD)), at.1.clamp(CARD_PAD, (view.1 - card.1 - bottom).max(CARD_PAD)))
 }
 
-/// Wie [`card_position`], bleibt aber auf der bisherigen Seite, solange die Karte dort passt.
-pub fn card_position_near(mark: Option<Rect>, card: (f64, f64), view: (f64, f64), bottom: f64, prefer: Option<CardSide>) -> ((f64, f64), Option<CardSide>) {
+const CARD_PAD: f64 = 12.0;
+/// So viel Luft bleibt um jedes Zeichen.
+const CARD_CLEARANCE: f64 = 10.0;
+/// Platz des Schilds über einem beschrifteten Zeichen.
+const LABEL_SPACE: f64 = 38.0;
+
+/// Abstand zweier Rechtecke; 0, wenn sie sich berühren.
+fn rect_gap(a: &Rect, b: &Rect) -> f64 {
+    let dx = (b.x0 - a.x1).max(a.x0 - b.x1).max(0.0);
+    let dy = (b.y0 - a.y1).max(a.y0 - b.y1).max(0.0);
+    dx.hypot(dy)
+}
+
+fn overlap(a: &Rect, b: &Rect) -> f64 {
+    let w = a.x1.min(b.x1) - a.x0.max(b.x0);
+    let h = a.y1.min(b.y1) - a.y0.max(b.y0);
+    if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
+}
+
+/// Die Stelle in `area`, an der die Karte nah an den Zeichen steht und wenig Inhalt
+/// verdeckt. Zeichen selbst bleiben frei, solange das irgendwie geht. Kosten in px²:
+/// verdeckter Inhalt zählt voll, Entfernung leicht und mit Abstand immer stärker.
+/// `near` hält die Karte bei einer Neuberechnung in der Nähe ihrer bisherigen Lage.
+fn best_card_spot(area: Rect, card: (f64, f64), marks: &[Rect], links: &[Pt], ink: impl Fn(&Rect) -> f64, near: Option<(f64, f64)>) -> (f64, f64) {
+    const GRID: f64 = 12.0;
     let (cw, ch) = card;
-    let (w, h) = view;
-    let gap = 28.0;
-    let pad = 12.0;
-    let (x, y, side) = match mark {
-        None => ((w - cw) / 2.0, h - ch - bottom - 60.0, None),
-        Some(r) => {
-            let fits = |s: &CardSide| match s {
-                CardSide::Right => r.x1 + gap + cw <= w - pad,
-                CardSide::Left => r.x0 - gap - cw >= pad,
-                CardSide::Below => r.y1 + gap + ch <= h - bottom,
-                CardSide::Above => r.y0 - gap - ch >= pad,
-            };
-            let side = prefer.filter(fits).or([CardSide::Right, CardSide::Left, CardSide::Below].into_iter().find(fits)).unwrap_or(CardSide::Above);
-            let (x, y) = match side {
-                CardSide::Right => (r.x1 + gap, r.y0 - 8.0),
-                CardSide::Left => (r.x0 - gap - cw, r.y0 - 8.0),
-                CardSide::Below => (r.x0, r.y1 + gap),
-                CardSide::Above => (r.x0, r.y0 - gap - ch),
-            };
-            (x, y, Some(side))
-        }
+    let cost = |x: f64, y: f64| {
+        let r = Rect::new(x, y, x + cw, y + ch);
+        let blocked: f64 = marks.iter().map(|m| overlap(&r, &m.expand(CARD_CLEARANCE))).sum();
+        let dist = marks.iter().map(|m| rect_gap(&r, m)).fold(f64::INFINITY, f64::min);
+        let dist = if dist.is_finite() { dist } else { 0.0 };
+        let crossed = links.iter().filter(|p| r.contains(**p)).count() as f64;
+        let moved = near.map_or(0.0, |(nx, ny)| (x - nx).hypot(y - ny));
+        (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(&r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed + 8.0 * moved
     };
-    ((x.clamp(pad, (w - cw - pad).max(pad)), y.clamp(pad, (h - ch - bottom).max(pad))), side)
+    let span = |a: f64, b: f64| ((b - a).max(0.0) / GRID).ceil() as usize;
+    let (xmax, ymax) = (area.x1 - cw, area.y1 - ch);
+    let axis = |lo: f64, hi: f64| (0..=span(lo, hi)).map(move |k| (lo + k as f64 * GRID).min(hi.max(lo)));
+    axis(area.x0, xmax)
+        .flat_map(|x| axis(area.y0, ymax).map(move |y| (x, y)))
+        .map(|(x, y)| ((x, y), cost(x, y)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map_or((area.x0, area.y0), |s| s.0)
+}
+
+/// Berechnete Lage der Karte, als Abstand zur Stelle.
+#[derive(Clone, Copy)]
+struct CardSpot {
+    offset: (f64, f64),
+    card: (f64, f64),
+    view: (f64, f64),
+    zoom: f64,
 }
 
 // ------------------------------------------------------------------------ Dialog
 
+const MAX_IDEAS: usize = 8;
+const IDEAS_PER_ROW: usize = 3;
 const DOCK_SPACE: i32 = 84;
 const MIN_ANSWER: i32 = 90;
 /// Breite des schwebenden Fensters
@@ -659,6 +803,10 @@ enum QuickAction {
     Tour(String),
     Ask(String),
     Progress,
+    /// Varianten für den Durchgang ab dieser Seite anbieten
+    PickLecture(usize),
+    Lecture(usize, usize),
+    BackToQuick,
 }
 
 /// Schnellaktionen unter dem leeren Eingabefeld: Symbol, Beschriftung, Frage an Claude.
@@ -767,7 +915,15 @@ pub struct ClaudePanel {
     /// bleibt so an ihrer Stelle im Dokument verankert
     guide_offsets: RefCell<Vec<Option<(f64, f64)>>>,
     /// Bisherige Seite der Karte, damit sie beim Scrollen nicht hin und her wechselt
-    guide_side: Cell<Option<CardSide>>,
+    guide_spot: Cell<Option<CardSpot>>,
+    /// Inhalt der Seiten fürs Platzieren, mit dem Stand der Notiz
+    guide_ink: RefCell<HashMap<usize, (u64, Rc<place::InkMap>)>>,
+    /// Führung passt sich an, wenn der Nutzer nicht weiterkommt
+    tour_adaptive: Cell<bool>,
+    /// Text des aktuellen Denkschritts ist aufgedeckt
+    guide_revealed: Cell<bool>,
+    guide_stuck: gtk::Button,
+    guide_note: gtk::Label,
     /// Stelle dieses Schritts auf der Seite. Fest, damit spätere Zeichen die Karte nicht versetzen.
     guide_anchor: Cell<Option<(usize, Rect)>>,
     /// laufendes Ziehen: Startpunkt im Fenster und Abstand beim Start
@@ -1015,6 +1171,11 @@ impl ClaudePanel {
         fill.set_hexpand(true);
         foot.append(&guide_prev);
         foot.append(&ask);
+        let guide_stuck = gtk::Button::with_label(crate::i18n::tl("Versteh ich nicht"));
+        guide_stuck.add_css_class("flat");
+        guide_stuck.set_visible(false);
+        guide_stuck.set_tooltip_text(Some(crate::i18n::tl("Claude baut hier einen einfacheren Zwischenschritt ein")));
+        foot.append(&guide_stuck);
         foot.append(&fill);
         foot.append(&guide_next);
         let guide = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -1028,6 +1189,12 @@ impl ClaudePanel {
         guide.append(&guide_text.root);
         let guide_extra = gtk::Box::new(gtk::Orientation::Vertical, 6);
         guide.append(&guide_extra);
+        let guide_note = gtk::Label::new(None);
+        guide_note.set_xalign(0.0);
+        guide_note.set_wrap(true);
+        guide_note.add_css_class("fk-claude-kind-detail");
+        guide_note.set_visible(false);
+        guide.append(&guide_note);
         guide.append(&foot);
         guide.set_visible(false);
 
@@ -1107,7 +1274,12 @@ impl ClaudePanel {
             tour_view: RefCell::new(None),
             guide_placed: Cell::new(false),
             guide_offsets: RefCell::new(Vec::new()),
-            guide_side: Cell::new(None),
+            guide_spot: Cell::new(None),
+            guide_ink: RefCell::default(),
+            tour_adaptive: Cell::new(false),
+            guide_revealed: Cell::new(false),
+            guide_stuck,
+            guide_note,
             guide_anchor: Cell::new(None),
             guide_drag: Cell::new(None),
             pinned: Cell::new(cfg.claude_pinned),
@@ -1297,6 +1469,12 @@ impl ClaudePanel {
             }
         });
         let w = Rc::downgrade(self);
+        self.guide_stuck.connect_clicked(move |_| {
+            if let Some(p) = w.upgrade() {
+                p.simplify_step("Der Nutzer sagt, dass er es nicht versteht");
+            }
+        });
+        let w = Rc::downgrade(self);
         self.guide_prev.connect_clicked(move |_| {
             if let Some(p) = w.upgrade() {
                 p.step(-1);
@@ -1427,11 +1605,17 @@ impl ClaudePanel {
             Tour(String),
             Ask(String),
             Progress,
+            Pick(usize),
+            Lecture(usize, usize),
+            Back,
         }
         let run = match self.quick_actions.borrow().get(row as usize) {
             Some((QuickAction::Tour(r), _)) => Run::Tour(r.clone()),
             Some((QuickAction::Ask(q), _)) => Run::Ask(q.clone()),
             Some((QuickAction::Progress, _)) => Run::Progress,
+            Some((QuickAction::PickLecture(p), _)) => Run::Pick(*p),
+            Some((QuickAction::Lecture(p, k), _)) => Run::Lecture(*p, *k),
+            Some((QuickAction::BackToQuick, _)) => Run::Back,
             None => return,
         };
         match run {
@@ -1439,11 +1623,75 @@ impl ClaudePanel {
                 let (steps, hints) = parse_tour(&raw);
                 self.step_aside();
                 self.tour_next.set(None);
+                self.tour_adaptive.set(false);
                 self.start_tour(steps, hints);
             }
             Run::Ask(q) => self.ask(&q),
             Run::Progress => self.show_progress(),
+            Run::Pick(start) => self.show_lecture_kinds(start),
+            Run::Lecture(start, kind) => self.start_lecture(start, kind),
+            Run::Back => {
+                self.rebuild_quick();
+                self.update_bar();
+            }
         }
+    }
+
+    /// Fragt vor dem Durchgang, wie tief er gehen soll.
+    fn show_lecture_kinds(&self, start: usize) {
+        self.quick.remove_all();
+        let add = |icon: &str, title: &str, detail: Option<&str>| {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            row.append(&gtk::Image::from_icon_name(icon));
+            let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+            let name = gtk::Label::new(Some(title));
+            name.set_xalign(0.0);
+            text.append(&name);
+            if let Some(d) = detail {
+                let more = gtk::Label::new(Some(d));
+                more.set_xalign(0.0);
+                more.add_css_class("fk-claude-kind-detail");
+                text.append(&more);
+            }
+            row.append(&text);
+            self.quick.append(&row);
+        };
+        let mut actions = Vec::new();
+        for (k, (name, detail, _)) in LECTURE_KINDS.iter().enumerate() {
+            add(["weather-clear-symbolic", "view-more-symbolic", "emblem-ok-symbolic", "media-seek-forward-symbolic"][k], crate::i18n::tl(name), Some(crate::i18n::tl(detail)));
+            actions.push((QuickAction::Lecture(start, k), true));
+        }
+        add("go-previous-symbolic", crate::i18n::tl("Zurück"), None);
+        actions.push((QuickAction::BackToQuick, true));
+        self.quick_actions.replace(actions);
+        self.quick.unselect_all();
+    }
+
+    /// Startet den Durchgang. Sichtbar bleibt eine kurze Zeile, die Anweisung geht verdeckt mit.
+    fn start_lecture(self: &Rc<Self>, start: usize, kind: usize) {
+        let Some(conv) = self.conv.borrow().clone().or_else(|| {
+            self.open();
+            self.conv.borrow().clone()
+        }) else {
+            return;
+        };
+        let kind = kind.min(LECTURE_KINDS.len() - 1);
+        let _ = std::fs::write(data_dir(&conv.dir).join(LECTURE_KIND_FILE), kind.to_string());
+        let (name, _, how) = LECTURE_KINDS[kind];
+        let language = if crate::i18n::english() { "Englisch" } else { "Deutsch" };
+        let guide = cache_dir(&conv.dir).join(LECTURE_GUIDE_FILE);
+        self.followup.replace(Some(format!(
+            "[Vorlesungsmodus. {how} Lies zuerst {} und halte dich genau daran. Nimm ab Seite {start} den nächsten zusammengehörenden Abschnitt von 3 bis 5 Seiten. Schreibe alle Texte auf {language}, unabhängig vom bisherigen Gespräch.]\n",
+            guide.display()
+        )));
+        conv.lecture.set(true);
+        let name = crate::i18n::tl(name);
+        self.ask(&crate::tr!("Vorlesung ab Seite {start}: {name}", "Lecture from page {start}: {name}"));
+    }
+
+    /// Variante des letzten Durchgangs in diesem Modul.
+    fn last_lecture_kind(&self) -> usize {
+        self.conv.borrow().as_ref().and_then(|c| std::fs::read_to_string(data_dir(&c.dir).join(LECTURE_KIND_FILE)).ok()).and_then(|t| t.trim().parse().ok()).unwrap_or(0)
     }
 
     /// Schnellaktionen aufbauen: Gespeichertes und Persönliches zuerst, dann die festen.
@@ -1478,11 +1726,11 @@ impl ClaudePanel {
             match index::lecture_next(&data_dir(&c.dir), n) {
                 Some(next) => {
                     add("media-seek-forward-symbolic", &crate::tr!("Vorlesung fortsetzen ab Seite {next}", "Continue lecture from page {next}"));
-                    actions.push((QuickAction::Ask(lecture_prompt(next)), true));
+                    actions.push((QuickAction::PickLecture(next), true));
                 }
                 None => {
                     add("media-seek-forward-symbolic", crate::i18n::tl("Vorlesung ab hier durchgehen"));
-                    actions.push((QuickAction::Ask(lecture_prompt(p + 1)), false));
+                    actions.push((QuickAction::PickLecture(p + 1), false));
                 }
             }
         }
@@ -1717,6 +1965,24 @@ impl ClaudePanel {
     }
 
     /// Testhilfe: schreibt "2+2" ins Schreibfeld.
+    pub fn test_lecture(self: &Rc<Self>, start: usize, kind: usize) {
+        self.open();
+        self.start_lecture(start, kind);
+    }
+
+    /// Testhilfe: öffnet die Variantenauswahl.
+    pub fn test_lecture_kinds(self: &Rc<Self>) {
+        self.open();
+        self.show_lecture_kinds(1);
+        self.update_bar();
+    }
+
+    /// Testhilfe: läuft wie ein Vorlesungsdurchgang, mit Anpassung.
+    pub fn test_adaptive(self: &Rc<Self>) {
+        self.tour_adaptive.set(true);
+        self.guide_stuck.set_visible(true);
+    }
+
     pub fn test_pad(&self) {
         self.pen_btn.set_active(true);
         let glyph = |x: f64| vec![(x, 40.0), (x + 18.0, 28.0), (x + 34.0, 40.0), (x + 30.0, 60.0), (x, 100.0), (x + 38.0, 100.0)];
@@ -2070,10 +2336,96 @@ impl ClaudePanel {
     fn guide_mark(&self) -> Option<Rect> {
         let view = self.tour_view.borrow().clone()?;
         let (page, area) = self.guide_anchor.get()?;
+        self.page_on_overlay(&view, page, area)
+    }
+
+    /// Rechteck einer Seite im Fenster, so wie es nach dem laufenden Gleiten steht.
+    fn page_on_overlay(&self, view: &DocView, page: usize, area: Rect) -> Option<Rect> {
         let r = view.canvas.page_rect_on_screen(page, area);
-        let pt = |x: f64, y: f64| view.canvas.compute_point(&self.overlay, &gtk::graphene::Point::new(x as f32, y as f32));
+        let (dx, dy) = view.canvas.guide_rest_shift();
+        let pt = |x: f64, y: f64| view.canvas.compute_point(&self.overlay, &gtk::graphene::Point::new((x + dx) as f32, (y + dy) as f32));
         let (a, b) = (pt(r.x0, r.y0)?, pt(r.x1, r.y1)?);
         Some(Rect::new(a.x() as f64, a.y() as f64, b.x() as f64, b.y() as f64))
+    }
+
+    /// Inhalt einer Seite, einmal je Stand der Notiz gerastert.
+    fn page_ink_map(&self, view: &DocView, page: usize) -> Option<Rc<place::InkMap>> {
+        let serial = view.canvas.history_serial();
+        if let Some((_, m)) = self.guide_ink.borrow().get(&page).filter(|e| e.0 == serial) {
+            return Some(m.clone());
+        }
+        let map = Rc::new(place::ink_map(&*view.canvas.page_data(page)?)?);
+        self.guide_ink.borrow_mut().insert(page, (serial, map.clone()));
+        Some(map)
+    }
+
+    /// Beste Lage der Karte für die aktuelle Ansicht, als Abstand zu `anchor`.
+    fn solve_card_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), near: Option<(f64, f64)>) -> (f64, f64) {
+        let c = &view.canvas;
+        let (w, h) = self.guide_view();
+        let origin = c.compute_point(&self.overlay, &gtk::graphene::Point::new(0.0, 0.0));
+        let (ox, oy) = origin.map_or((0.0, 0.0), |p| (p.x() as f64, p.y() as f64));
+        let area = Rect::new(ox.max(0.0) + CARD_PAD, oy.max(0.0) + CARD_PAD, (ox + c.width() as f64).min(w) - CARD_PAD, (oy + c.height() as f64).min(h - DOCK_SPACE as f64));
+        // ganze Seiten im Fenster mit ihrem Inhalt
+        let sheets: Vec<(Rect, Rc<place::InkMap>)> = (page.saturating_sub(1)..=page + 1)
+            .filter_map(|p| {
+                let (pw, ph) = c.page_size(p)?;
+                let on_screen = self.page_on_overlay(view, p, Rect::new(0.0, 0.0, pw, ph))?;
+                let visible = on_screen.intersects(&area);
+                visible.then(|| self.page_ink_map(view, p).map(|m| (on_screen, m))).flatten()
+            })
+            .collect();
+        let ink = |r: &Rect| -> f64 {
+            sheets
+                .iter()
+                .filter(|(s, _)| s.intersects(r))
+                .map(|(s, m)| {
+                    let z = s.width() / m.width();
+                    m.covered(&Rect::new((r.x0 - s.x0) / z, (r.y0 - s.y0) / z, (r.x1 - s.x0) / z, (r.y1 - s.y0) / z)) * z * z
+                })
+                .sum()
+        };
+        let (shapes, link_points) = c.guide_shapes();
+        let mut marks: Vec<Rect> = shapes
+            .iter()
+            .filter_map(|(r, labeled)| {
+                let s = self.page_on_overlay(view, page, *r)?;
+                Some(if *labeled { Rect::new(s.x0, s.y0 - LABEL_SPACE, s.x1, s.y1) } else { s })
+            })
+            .collect();
+        if marks.is_empty() {
+            marks.push(anchor);
+        }
+        let links: Vec<Pt> = link_points
+            .iter()
+            .filter_map(|q| self.page_on_overlay(view, page, Rect::new(q.x, q.y, q.x, q.y)).map(|s| Pt::new(s.x0, s.y0)))
+            .collect();
+        let (x, y) = best_card_spot(area, card, &marks, &links, ink, near);
+        (x - anchor.x0, y - anchor.y0)
+    }
+
+    /// Lage der Karte zur Stelle. Neu gerechnet wird nur, wenn sich etwas Wesentliches
+    /// ändert: Größe der Karte, Fenster, Zoom oder die Stelle wird weggescrollt.
+    fn card_spot(&self, anchor: Rect) -> (f64, f64) {
+        let (card, view_size, bottom) = (self.guide_size(), self.guide_view(), DOCK_SPACE as f64);
+        let Some(view) = self.tour_view.borrow().clone() else { return (0.0, 0.0) };
+        let Some((page, _)) = self.guide_anchor.get() else { return (0.0, 0.0) };
+        let zoom = view.canvas.zoom();
+        let placed = self.guide_spot.get();
+        let fresh = placed.is_some_and(|s| {
+            let at = (anchor.x0 + s.offset.0, anchor.y0 + s.offset.1);
+            let fit = fit_card(at, card, view_size, bottom);
+            let on_screen = anchor.intersects(&Rect::new(0.0, 0.0, view_size.0, view_size.1));
+            let pushed = view.canvas.guide_settled() && on_screen && (at.0 - fit.0).abs().max((at.1 - fit.1).abs()) > 40.0;
+            (s.card.0 - card.0).abs() <= 16.0 && (s.card.1 - card.1).abs() <= 16.0 && s.view == view_size && (s.zoom - zoom).abs() < 1e-3 && !pushed
+        });
+        if fresh {
+            return placed.map_or((0.0, 0.0), |s| s.offset);
+        }
+        let near = placed.map(|s| (anchor.x0 + s.offset.0, anchor.y0 + s.offset.1));
+        let offset = self.solve_card_spot(&view, page, anchor, card, near);
+        self.guide_spot.set(Some(CardSpot { offset, card, view: view_size, zoom }));
+        offset
     }
 
     /// Ganz aus dem Fenster kann die Karte nie.
@@ -2152,6 +2504,28 @@ impl ClaudePanel {
             self.end_tour();
         } else {
             self.open();
+        }
+        true
+    }
+
+    /// Pfeil links/rechts blättert durch die Karten. Texteingaben behalten ihre Pfeile,
+    /// und auf der letzten Karte ist Schluss, damit gehaltene Tasten die Führung nicht beenden.
+    pub fn key_arrow(self: &Rc<Self>, key: gdk::Key, mods: gdk::ModifierType) -> bool {
+        let d = match key {
+            gdk::Key::Left => -1,
+            gdk::Key::Right => 1,
+            _ => return false,
+        };
+        let held = gdk::ModifierType::SHIFT_MASK | gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK | gdk::ModifierType::META_MASK;
+        if mods.intersects(held) || !self.tour_active() || !self.guide.is_visible() {
+            return false;
+        }
+        let focus = self.guide.root().and_then(|r| gtk::prelude::RootExt::focus(&r));
+        if focus.is_some_and(|f| f.is::<gtk::Editable>() || f.is::<gtk::TextView>()) {
+            return false;
+        }
+        if d < 0 || self.tour_idx.get() + 1 < self.tour.borrow().len() {
+            self.step(d);
         }
         true
     }
@@ -2724,6 +3098,7 @@ impl ClaudePanel {
         let _ = std::fs::remove_file(cache.join(place::RESULT));
         let _ = std::fs::remove_file(cache.join(place::REQUEST));
         place::write_guide(&cache);
+        let _ = std::fs::write(cache.join(LECTURE_GUIDE_FILE), LECTURE_GUIDE.replace("CACHE", &cache.display().to_string()));
         let session = conv.session.borrow().clone();
         let started = match launch(&conv.dir, &cache, &prompt, session.as_deref(), model, effort) {
             Ok(l) => l,
@@ -2788,6 +3163,10 @@ impl ClaudePanel {
             conv.pid.set(Some(0));
             return Box::pin(self.run(conv, prompt, origin, model, effort, true)).await;
         }
+        let finished_clean = failure.is_none() && !conv.stopped.get();
+        let lecture = conv.lecture.replace(false);
+        let repairing = conv.repairing.replace(false);
+        let insert = conv.insert_at.take();
         if conv.stopped.replace(false) {
             conv.push(Kind::Tool, crate::i18n::tl("Angehalten"));
         } else if let Some(e) = failure {
@@ -2804,7 +3183,7 @@ impl ClaudePanel {
             if next.is_none() {
                 (self.toast)(crate::i18n::tl("Vorlesung durchgearbeitet"));
             }
-        } else {
+        } else if insert.is_none() && !repairing {
             self.tour_next.set(None);
         }
         // Einschätzungen aus dieser Antwort in den Lernstand übernehmen
@@ -2819,6 +3198,27 @@ impl ClaudePanel {
         }
         let raw_tour = std::fs::read_to_string(cache.join(TOUR_FILE)).unwrap_or_default();
         let (tour, hints) = parse_tour(&raw_tour);
+        if let Some(after) = insert {
+            let _ = std::fs::remove_file(cache.join(TOUR_FILE));
+            conv.save();
+            self.insert_steps(after, tour);
+            conv.last_run.set(Some((model, effort)));
+            self.plan_compact(conv);
+            return;
+        }
+        // Text statt Führung ist beim Vorlesungsdurchgang kein Ergebnis: einmal nachfordern
+        if lecture && tour.is_empty() && finished_clean {
+            conv.repairing.set(true);
+            conv.status.replace(crate::i18n::tl("Claude baut die Führung …").into());
+            conv.pid.set(Some(0));
+            self.sync_if_bound(&conv);
+            let repair = format!("[Graphit] Es liegt keine gültige fuehrung.json vor. Der Nutzer will den Durchgang interaktiv, nicht als Text. Schreibe jetzt {} nach der Anleitung in {}. Erkläre nichts im Chat.", cache.join(TOUR_FILE).display(), cache.join(LECTURE_GUIDE_FILE).display());
+            return Box::pin(self.run(conv, repair, origin, model, effort, retried)).await;
+        }
+        if repairing && tour.is_empty() && finished_clean {
+            conv.push(Kind::Error, crate::i18n::tl("Claude hat keine Führung erstellt. Bitte versuche es noch einmal."));
+        }
+        let adaptive = lecture || repairing;
         if !tour.is_empty() {
             // zum späteren Abspielen ohne neue Anfrage
             let note = origin.view.as_ref().and_then(Weak::upgrade).and_then(|v| v.canvas.st().doc_key());
@@ -2845,6 +3245,7 @@ impl ClaudePanel {
             };
             if here {
                 self.step_aside();
+                self.tour_adaptive.set(adaptive);
                 self.start_tour(tour, hints);
             } else {
                 conv.pending_tour.replace((tour, hints));
@@ -2977,8 +3378,85 @@ impl ClaudePanel {
 
     fn read_step(&self) {
         if let Some(s) = self.tour.borrow().get(self.tour_idx.get()) {
-            self.speaker.say(&index::marks(&s.text).clean);
+            match s.think.as_ref().filter(|_| !self.guide_revealed.get()) {
+                Some(t) => self.speaker.say(&t.question),
+                None => self.speaker.say(&index::marks(&s.text).clean),
+            }
         }
+    }
+
+    /// Claude baut hinter dem aktuellen Schritt einen einfacheren Zwischenschritt ein.
+    /// Die Karte bleibt offen, man kann währenddessen weiterlesen.
+    fn simplify_step(self: &Rc<Self>, reason: &str) {
+        let i = self.tour_idx.get();
+        let Some(step) = self.tour.borrow().get(i).cloned() else { return };
+        let Some(conv) = self.conv.borrow().clone() else { return };
+        if conv.pid.get().is_some() || !self.tour_adaptive.get() {
+            return;
+        }
+        let view = self.note();
+        let page = step.page.unwrap_or_else(|| view.as_ref().map_or(0, |v| v.canvas.st().current_page()));
+        let language = if crate::i18n::english() { "Englisch" } else { "Deutsch" };
+        let cache = cache_dir(&conv.dir);
+        let shown = step.think.as_ref().map_or(String::new(), |t| format!(" Denkfrage: {}", t.question));
+        let quiz = conv.quiz_log.take().join("\n");
+        let prompt = format!(
+            "[Anpassung der laufenden Führung. {reason}. Schritt auf Seite {}: {}.{shown} {quiz}\nSchreibe {} neu, mit genau 1 bis 2 einfacheren Zwischenschritten auf derselben Seite, nach {}. Setze an der vermuteten Verständnislücke an, mit kleinem Zahlenbeispiel oder Bild, mindestens einer mit denken. Keine landkarte. Alle Texte auf {language}. Erkläre nichts im Chat.]",
+            page + 1,
+            step.text,
+            cache.join(TOUR_FILE).display(),
+            cache.join(LECTURE_GUIDE_FILE).display()
+        );
+        conv.insert_at.set(Some(i));
+        conv.status.replace(crate::i18n::tl("Claude baut einen Zwischenschritt …").into());
+        conv.pid.set(Some(0));
+        self.guide_stuck.set_sensitive(false);
+        self.guide_note.set_text(crate::i18n::tl("Claude baut einen einfacheren Zwischenschritt …"));
+        self.guide_note.set_visible(true);
+        let origin = Origin { view: view.as_ref().map(Rc::downgrade), page };
+        let (model, effort) = (self.model_alias(), self.effort_value());
+        let p = self.clone();
+        glib::spawn_future_local(async move { p.run(conv, prompt, origin, model, effort, false).await });
+    }
+
+    /// Fügt Zwischenschritte hinter `after` ein, ohne die aktuelle Karte zu wechseln.
+    fn insert_steps(&self, after: usize, steps: Vec<Step>) {
+        self.guide_stuck.set_sensitive(true);
+        if steps.is_empty() || self.tour.borrow().is_empty() {
+            self.guide_note.set_visible(false);
+            return;
+        }
+        let at = (after + 1).min(self.tour.borrow().len());
+        let added = steps.len();
+        self.tour.borrow_mut().splice(at..at, steps);
+        self.guide_offsets.borrow_mut().splice(at..at, vec![None; added]);
+        if self.tour_idx.get() >= at {
+            self.tour_idx.set(self.tour_idx.get() + added);
+        }
+        self.guide_note.set_text(crate::i18n::tl("Einfacherer Zwischenschritt ist bereit: Weiter"));
+        self.guide_note.set_visible(true);
+        self.refresh_progress();
+    }
+
+    /// Zähler, Fortschrittsbalken und Beschriftung des Weiter-Knopfs.
+    fn refresh_progress(&self) {
+        let (i, n) = (self.tour_idx.get(), self.tour.borrow().len());
+        self.guide_count.set_text(&format!("{} / {n}", i + 1));
+        while let Some(c) = self.guide_steps.first_child() {
+            self.guide_steps.remove(&c);
+        }
+        for k in 0..n {
+            let seg = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            seg.set_hexpand(true);
+            seg.add_css_class("fk-claude-seg");
+            if k <= i {
+                seg.add_css_class("fk-claude-seg-on");
+            }
+            self.guide_steps.append(&seg);
+        }
+        self.guide_steps.set_visible(n > 1);
+        self.guide_prev.set_sensitive(i > 0);
+        self.guide_next.set_label(if i + 1 == n { crate::i18n::tl("Fertig") } else { crate::i18n::tl("Weiter") });
     }
 
     fn end_tour(&self) {
@@ -2988,6 +3466,8 @@ impl ClaudePanel {
             v.canvas.clear_guide();
         }
         self.tour.borrow_mut().clear();
+        self.tour_adaptive.set(false);
+        self.guide_note.set_visible(false);
         self.guide.set_visible(false);
     }
 
@@ -3039,24 +3519,200 @@ impl ClaudePanel {
         r
     }
 
+    fn option_button(&self, k: usize, opt: &str) -> gtk::Button {
+        let text = self.extra_text(opt);
+        let letter = gtk::Label::new(Some(&char::from(b'A' + (k as u8).min(25)).to_string()));
+        letter.add_css_class("fk-claude-letter");
+        letter.set_valign(gtk::Align::Start);
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.append(&letter);
+        row.append(&text.root);
+        // Klicks gehen an den Knopf, nicht an das Textfeld darin
+        row.set_can_target(false);
+        let b = gtk::Button::new();
+        b.set_child(Some(&row));
+        b.add_css_class("fk-claude-option");
+        b
+    }
+
+    /// Denkschritt: Die Frage steht zuerst da, alles Weitere erscheint nach der Antwort.
+    fn add_think(self: &Rc<Self>, step: &Step, think: &Think) {
+        let mut hidden = Vec::new();
+        let mut child = self.guide_extra.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            c.set_visible(false);
+            hidden.push(c);
+        }
+        let verdict = self.extra_text("");
+        verdict.root.set_visible(false);
+        let text = index::marks(&step.text).clean;
+        let reveal: Rc<dyn Fn(&Rc<ClaudePanel>, Option<bool>)> = {
+            let (hidden, verdict, text) = (hidden, verdict.clone(), text);
+            Rc::new(move |p, correct| {
+                p.guide_revealed.set(true);
+                p.guide_text.set(&text, &p.engine);
+                for c in &hidden {
+                    c.set_visible(true);
+                }
+                if let Some(ok) = correct {
+                    verdict.set(if ok { crate::i18n::tl("**Richtig.**") } else { crate::i18n::tl("**Nicht ganz.**") }, &p.engine);
+                    verdict.root.set_visible(true);
+                }
+                if p.guide_speak.is_active() {
+                    p.read_step();
+                }
+            })
+        };
+        if think.options.is_empty() {
+            let b = gtk::Button::with_label(crate::i18n::tl("Antwort zeigen"));
+            b.add_css_class("fk-claude-next");
+            let w = Rc::downgrade(self);
+            let show = reveal.clone();
+            b.connect_clicked(move |b| {
+                if let Some(p) = w.upgrade() {
+                    b.set_visible(false);
+                    show(&p, None);
+                }
+            });
+            self.guide_extra.prepend(&b);
+            return;
+        }
+        let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
+        let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        for (k, opt) in think.options.iter().enumerate() {
+            let b = self.option_button(k, opt);
+            let (w, all, right, show, question, options) = (Rc::downgrade(self), buttons.clone(), think.right, reveal.clone(), think.question.clone(), think.options.clone());
+            b.connect_clicked(move |clicked| {
+                let Some(p) = w.upgrade() else { return };
+                for (i, o) in all.borrow().iter().enumerate() {
+                    o.set_sensitive(false);
+                    if Some(i) == right {
+                        o.add_css_class("fk-claude-right");
+                    }
+                }
+                let correct = right.map(|r| r == k);
+                if correct == Some(false) {
+                    clicked.add_css_class("fk-claude-wrong");
+                    if let Some(c) = p.conv.borrow().as_ref() {
+                        c.quiz_log.borrow_mut().push(format!("- Zu „{question}“ gewählt: „{}“ (falsch)", options.get(k).cloned().unwrap_or_default()));
+                    }
+                }
+                show(&p, correct);
+                if correct == Some(false) {
+                    p.simplify_step("Der Nutzer lag bei der Denkfrage falsch");
+                }
+            });
+            buttons.borrow_mut().push(b.clone());
+            box_.append(&b);
+        }
+        box_.append(&verdict.root);
+        self.guide_extra.prepend(&box_);
+    }
+
+    /// Landkarte: Antippen einer Idee springt zu ihrer Stelle und zeigt ihren Satz.
+    fn add_map(self: &Rc<Self>, map: &IdeaMap, view: &Rc<DocView>) {
+        const ROW_GAP: i32 = 26;
+        let rows = gtk::Box::new(gtk::Orientation::Vertical, ROW_GAP);
+        let detail = self.extra_text("");
+        detail.root.set_visible(false);
+        let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
+        let mut placed = vec![None; map.ideas.len()];
+        for row in idea_rows(map) {
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+            line.set_homogeneous(true);
+            for i in row {
+                let idea = &map.ideas[i];
+                let label = gtk::Label::new(Some(&strip_math(&idea.title)));
+                label.set_wrap(true);
+                label.set_justify(gtk::Justification::Center);
+                let b = gtk::Button::new();
+                b.set_child(Some(&label));
+                b.add_css_class("fk-claude-idea");
+                let (w, v, all, shown, data) = (Rc::downgrade(self), view.clone(), buttons.clone(), detail.clone(), idea.clone());
+                b.connect_clicked(move |clicked| {
+                    let Some(p) = w.upgrade() else { return };
+                    for o in all.borrow().iter() {
+                        o.remove_css_class("fk-claude-idea-on");
+                    }
+                    clicked.add_css_class("fk-claude-idea-on");
+                    shown.set(&data.text, &p.engine);
+                    shown.root.set_visible(!data.text.is_empty());
+                    p.show_idea(&data, &v);
+                });
+                buttons.borrow_mut().push(b.clone());
+                placed[i] = Some(b.clone());
+                line.append(&b);
+            }
+            rows.append(&line);
+        }
+        let area = gtk::DrawingArea::new();
+        area.set_can_target(false);
+        let (links, nodes) = (map.links.clone(), placed);
+        let anchor = area.clone();
+        area.set_draw_func(move |_, cr, _, _| {
+            cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Normal);
+            cr.set_font_size(9.5);
+            cr.set_line_width(1.2);
+            for (a, b, name) in &links {
+                let (Some(Some(from)), Some(Some(to))) = (nodes.get(*a), nodes.get(*b)) else { continue };
+                let at = |w: &gtk::Button, fx: f32, fy: f32| w.compute_point(&anchor, &gtk::graphene::Point::new(w.width() as f32 * fx, w.height() as f32 * fy));
+                let (Some(p0), Some(p1)) = (at(from, 0.5, 1.0), at(to, 0.5, 0.0)) else { continue };
+                let (x0, y0, x1, y1) = (p0.x() as f64, p0.y() as f64, p1.x() as f64, p1.y() as f64);
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.42);
+                cr.move_to(x0, y0);
+                let mid = (y0 + y1) / 2.0;
+                cr.curve_to(x0, mid, x1, mid, x1, y1 - 1.0);
+                let _ = cr.stroke();
+                cr.move_to(x1 - 3.5, y1 - 6.0);
+                cr.line_to(x1, y1 - 1.0);
+                cr.line_to(x1 + 3.5, y1 - 6.0);
+                let _ = cr.stroke();
+                if !name.is_empty() {
+                    if let Ok(e) = cr.text_extents(name) {
+                        // Kartenfarbe unter der Schrift, sonst läuft die Linie hindurch
+                        cr.set_source_rgb(0.122, 0.122, 0.137);
+                        cr.rectangle((x0 + x1) / 2.0 - e.width() / 2.0 - 3.0, mid - 7.0, e.width() + 6.0, 13.0);
+                        let _ = cr.fill();
+                        cr.set_source_rgba(1.0, 1.0, 1.0, 0.7);
+                        cr.move_to((x0 + x1) / 2.0 - e.width() / 2.0, mid + 3.0);
+                        let _ = cr.show_text(name);
+                    }
+                }
+            }
+        });
+        let overlay = gtk::Overlay::new();
+        overlay.set_child(Some(&rows));
+        overlay.add_overlay(&area);
+        self.guide_extra.prepend(&detail.root);
+        self.guide_extra.prepend(&overlay);
+    }
+
+    /// Springt zur Stelle einer Idee und rahmt sie ein.
+    fn show_idea(&self, idea: &Idea, view: &Rc<DocView>) {
+        let Some(spec) = &idea.mark else { return };
+        let c = &view.canvas;
+        let hint = idea.page.unwrap_or_else(|| c.st().current_page()).min(c.page_count().saturating_sub(1));
+        let (page, rects) = match (spec.find.as_ref().and_then(|q| c.find_text(q, hint)), spec.area) {
+            (Some(hit), _) => hit,
+            (None, Some(a)) => {
+                let Some((w, h)) = c.page_size(hint) else { return };
+                (hint, vec![Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h)])
+            }
+            _ => return,
+        };
+        c.show_guide(page, vec![Mark { rects, kind: spec.kind, label: None, color: None }], Vec::new(), Vec::new());
+        self.guide_spot.set(None);
+        self.guide_anchor.set(c.guide_page_area());
+    }
+
     /// Antwortmöglichkeiten: nach dem Tippen zeigt die Karte Richtig/Falsch und warum.
     fn add_quiz(self: &Rc<Self>, quiz: &Quiz, question: &str) {
         let answer = self.extra_text("");
         answer.root.set_visible(false);
         let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
         for (k, opt) in quiz.options.iter().enumerate() {
-            let text = self.extra_text(opt);
-            let letter = gtk::Label::new(Some(&char::from(b'A' + (k as u8).min(25)).to_string()));
-            letter.add_css_class("fk-claude-letter");
-            letter.set_valign(gtk::Align::Start);
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            row.append(&letter);
-            row.append(&text.root);
-            // Klicks gehen an den Knopf, nicht an das Textfeld darin
-            row.set_can_target(false);
-            let b = gtk::Button::new();
-            b.set_child(Some(&row));
-            b.add_css_class("fk-claude-option");
+            let b = self.option_button(k, opt);
             let (w, all, right, why, out) = (Rc::downgrade(self), buttons.clone(), quiz.right, quiz.why.clone(), answer.clone());
             let (asked, options) = (question.to_string(), quiz.options.clone());
             b.connect_clicked(move |clicked| {
@@ -3080,7 +3736,9 @@ impl ClaudePanel {
                     let verdict = if k == right { "richtig" } else { "falsch" };
                     c.quiz_log.borrow_mut().push(format!("- Zu „{asked}“ gewählt: „{chosen}“ ({verdict}), richtig ist „{correct}“"));
                 }
-                if k != right {
+                if k != right && p.tour_adaptive.get() {
+                    p.simplify_step("Der Nutzer hat im Quiz falsch geantwortet");
+                } else if k != right {
                     let more = p.ask_button(crate::i18n::tl("Erklär mir das"), &crate::tr!("Ich habe im Quiz „{chosen}“ gewählt, richtig ist „{correct}“. Wo liegt mein Denkfehler?", "I chose “{chosen}” in the quiz, but “{correct}” is correct. Where did my reasoning go wrong?"));
                     p.guide_extra.insert_child_after(&more, Some(&out.root));
                 }
@@ -3142,6 +3800,7 @@ impl ClaudePanel {
         let (data, begin, values) = (p.clone(), start.clone(), now.clone());
         area.set_draw_func(move |_, cr, w, h| plot::draw(cr, w as f64, h as f64, &data, &begin, &values.borrow(), plot::DARK));
         self.guide_extra.append(&area);
+        let mut scales: Vec<(String, gtk::Scale)> = Vec::new();
         for s in &p.sliders {
             let label = gtk::Label::new(None);
             label.set_xalign(0.0);
@@ -3159,7 +3818,9 @@ impl ClaudePanel {
             });
             self.guide_extra.append(&label);
             self.guide_extra.append(&scale);
+            scales.push((s.symbol.clone(), scale));
         }
+        self.add_plot_controls(p, &area, &now, &scales);
         let take = gtk::Button::with_label(crate::i18n::tl("In Notiz übernehmen"));
         take.add_css_class("flat");
         let (data, begin, values, v) = (p.clone(), start, now, view.clone());
@@ -3172,6 +3833,123 @@ impl ClaudePanel {
             }
         });
         self.guide_extra.append(&take);
+    }
+
+    /// Schritt- und Abspielknöpfe für Folgen und durchfahrbare Regler.
+    fn add_plot_controls(&self, p: &Plot, area: &gtk::DrawingArea, now: &Rc<RefCell<HashMap<String, f64>>>, scales: &[(String, gtk::Scale)]) {
+        const SWEEP_TICK_MS: u64 = 33;
+        const SWEEP_FRAMES: u32 = 110;
+        const STEP_TICK_MS: u64 = 420;
+        let sweep = p.animate.as_ref().and_then(|a| scales.iter().find(|s| &s.0 == a)).map(|s| s.1.clone());
+        if p.sequence.is_none() && sweep.is_none() {
+            return;
+        }
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let play = gtk::Button::from_icon_name("media-playback-start-symbolic");
+        play.add_css_class("flat");
+        play.set_tooltip_text(Some(crate::i18n::tl("Abspielen")));
+        row.append(&play);
+        let running = Rc::new(Cell::new(false));
+        if let Some(q) = p.sequence.clone() {
+            let count = gtk::Label::new(None);
+            count.add_css_class("fk-claude-slider");
+            count.set_hexpand(true);
+            count.set_xalign(0.0);
+            let show = {
+                let (count, now, q, area) = (count.clone(), now.clone(), q.clone(), area.clone());
+                Rc::new(move || {
+                    let values = now.borrow();
+                    let k = values.get(plot::STEP).copied().unwrap_or(0.0) as usize;
+                    let n = plot::sequence_len(&q, &values);
+                    let k = k.min(n);
+                    count.set_text(&crate::tr!("Schritt {k} von {n}", "Step {k} of {n}"));
+                    area.queue_draw();
+                })
+            };
+            show();
+            let forward = gtk::Button::from_icon_name("media-skip-forward-symbolic");
+            forward.add_css_class("flat");
+            forward.set_tooltip_text(Some(crate::i18n::tl("Ein Schritt")));
+            let back = gtk::Button::from_icon_name("media-skip-backward-symbolic");
+            back.add_css_class("flat");
+            back.set_tooltip_text(Some(crate::i18n::tl("Zurücksetzen")));
+            let advance = {
+                let (now, q, show) = (now.clone(), q.clone(), show.clone());
+                Rc::new(move || -> bool {
+                    let more = {
+                        let mut values = now.borrow_mut();
+                        let n = plot::sequence_len(&q, &values) as f64;
+                        let k = (values.get(plot::STEP).copied().unwrap_or(0.0) + 1.0).min(n);
+                        values.insert(plot::STEP.to_string(), k);
+                        k < n
+                    };
+                    show();
+                    more
+                })
+            };
+            {
+                let a = advance.clone();
+                forward.connect_clicked(move |_| {
+                    a();
+                });
+            }
+            {
+                let (now, show) = (now.clone(), show.clone());
+                back.connect_clicked(move |_| {
+                    now.borrow_mut().insert(plot::STEP.to_string(), 0.0);
+                    show();
+                });
+            }
+            for (_, scale) in scales {
+                let show = show.clone();
+                scale.connect_value_changed(move |_| show());
+            }
+            row.append(&back);
+            row.append(&forward);
+            row.append(&count);
+            let (area, run, now_for_play) = (area.clone(), running.clone(), now.clone());
+            play.connect_clicked(move |_| {
+                if run.replace(true) {
+                    run.set(false);
+                    return;
+                }
+                now_for_play.borrow_mut().insert(plot::STEP.to_string(), 0.0);
+                let (a, run, widget) = (advance.clone(), run.clone(), area.clone());
+                glib::timeout_add_local(Duration::from_millis(STEP_TICK_MS), move || {
+                    // die Karte kann währenddessen weitergeblättert sein
+                    if !run.get() || widget.root().is_none() || !a() {
+                        run.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+                    glib::ControlFlow::Continue
+                });
+            });
+        } else if let Some(scale) = sweep {
+            let run = running.clone();
+            play.connect_clicked(move |_| {
+                if run.replace(true) {
+                    run.set(false);
+                    return;
+                }
+                let adj = scale.adjustment();
+                let (lo, hi, back_to) = (adj.lower(), adj.upper(), adj.value());
+                let frame = Cell::new(0u32);
+                let (run, scale) = (run.clone(), scale.clone());
+                glib::timeout_add_local(Duration::from_millis(SWEEP_TICK_MS), move || {
+                    frame.set(frame.get() + 1);
+                    if !run.get() || scale.root().is_none() || frame.get() > SWEEP_FRAMES {
+                        if scale.root().is_some() {
+                            scale.set_value(back_to);
+                        }
+                        run.set(false);
+                        return glib::ControlFlow::Break;
+                    }
+                    scale.set_value(lo + (hi - lo) * frame.get() as f64 / SWEEP_FRAMES as f64);
+                    glib::ControlFlow::Continue
+                });
+            });
+        }
+        self.guide_extra.append(&row);
     }
 
     fn show_extras(self: &Rc<Self>, step: &Step, last: bool, view: &Rc<DocView>) {
@@ -3233,7 +4011,16 @@ impl ClaudePanel {
         }
         if last {
             if let Some(next) = self.tour_next.get() {
-                self.guide_extra.append(&self.ask_button(&crate::tr!("Nächster Abschnitt ab Seite {next}", "Next section from page {next}"), &lecture_prompt(next)));
+                let b = gtk::Button::with_label(&crate::tr!("Nächster Abschnitt ab Seite {next}", "Next section from page {next}"));
+                b.add_css_class("fk-claude-hint");
+                let w = Rc::downgrade(self);
+                b.connect_clicked(move |_| {
+                    if let Some(p) = w.upgrade() {
+                        let kind = p.last_lecture_kind();
+                        p.start_lecture(next, kind);
+                    }
+                });
+                self.guide_extra.append(&b);
             }
             for h in self.tour_hints.borrow().iter() {
                 self.guide_extra.append(&self.hint_button(h));
@@ -3243,38 +4030,35 @@ impl ClaudePanel {
 
     fn show_step(self: &Rc<Self>, i: usize) {
         let Some(step) = self.tour.borrow().get(i).cloned() else { return };
-        let n = self.tour.borrow().len();
         self.tour_idx.set(i);
-        self.guide_count.set_text(&format!("{} / {n}", i + 1));
-        self.guide_kind.set_text(match (&step.quiz, &step.task) {
-            (Some(_), _) => "Quiz",
-            (_, Some(_)) => crate::i18n::tl("Du bist dran"),
+        self.guide_revealed.set(step.think.is_none());
+        self.guide_note.set_visible(false);
+        self.guide_stuck.set_visible(self.tour_adaptive.get());
+        self.guide_kind.set_text(match (&step.map, &step.think, &step.quiz, &step.task) {
+            (Some(_), ..) => crate::i18n::tl("Überblick"),
+            (_, Some(_), ..) => crate::i18n::tl("Erst denken"),
+            (_, _, Some(_), _) => "Quiz",
+            (_, _, _, Some(_)) => crate::i18n::tl("Du bist dran"),
             _ => crate::i18n::tl("Erklärung"),
         });
-        while let Some(c) = self.guide_steps.first_child() {
-            self.guide_steps.remove(&c);
-        }
-        for k in 0..n {
-            let seg = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-            seg.set_hexpand(true);
-            seg.add_css_class("fk-claude-seg");
-            if k <= i {
-                seg.add_css_class("fk-claude-seg-on");
-            }
-            self.guide_steps.append(&seg);
-        }
-        self.guide_steps.set_visible(n > 1);
+        self.refresh_progress();
         // zwei gleiche Animationen im Wechsel, sonst läuft sie nur beim ersten Schritt
         let (on, off) = if i % 2 == 0 { ("fk-claude-step-a", "fk-claude-step-b") } else { ("fk-claude-step-b", "fk-claude-step-a") };
         self.guide.remove_css_class(off);
         self.guide.add_css_class(on);
-        self.guide_text.set(&index::marks(&step.text).clean, &self.engine);
-        self.guide_prev.set_sensitive(i > 0);
-        self.guide_next.set_label(if i + 1 == n { crate::i18n::tl("Fertig") } else { crate::i18n::tl("Weiter") });
-        if let Some(old) = self.tour_view.take() {
+        match &step.think {
+            Some(t) => self.guide_text.set(&t.question, &self.engine),
+            None => self.guide_text.set(&index::marks(&step.text).clean, &self.engine),
+        }
+        let previous = self.tour_view.take();
+        if let Some(old) = &previous {
             old.canvas.clear_guide();
         }
         let Some(view) = (self.view_for)(&step.target).or_else(|| self.note()) else { return };
+        let same_view = previous.is_some_and(|old| Rc::ptr_eq(&old, &view));
+        if !same_view {
+            self.guide_ink.borrow_mut().clear();
+        }
         let c = &view.canvas;
         let hint = step.page.unwrap_or_else(|| c.st().current_page()).min(c.page_count().saturating_sub(1));
         let mut page = None;
@@ -3321,16 +4105,27 @@ impl ClaudePanel {
         let (w, h) = c.page_size(page).unwrap_or((1.0, 1.0));
         let sketch = step.sketch.iter().map(|l| l.iter().map(|q| Pt::new(q[0] * w, q[1] * h)).collect()).collect();
         c.show_guide(page, marks, links, sketch);
-        self.show_extras(&step, i + 1 == n, &view);
+        self.show_extras(&step, i + 1 == self.tour.borrow().len(), &view);
         self.add_terms(&step, &term_marks, &view);
+        if let Some(t) = &step.think {
+            self.add_think(&step, t);
+        }
+        if let Some(m) = &step.map {
+            self.add_map(m, &view);
+        }
         if self.guide_speak.is_active() {
             self.read_step();
         }
         if std::env::var("GRAPHIT_PROFILE").is_ok() {
             eprintln!("PROFILE Schritt {} ({}): Zeichen bei {:?}", i + 1, step.target, view.canvas.guide_screen_rect());
         }
-        self.guide_side.set(None);
-        self.guide_anchor.set(view.canvas.guide_page_area());
+        // Karte ohne eigene Zeichen bleibt, wo die vorige stand, solange es dieselbe Seite ist
+        let own = view.canvas.guide_page_area();
+        let stays = own.is_none() && same_view && step.page.is_none_or(|_| self.guide_anchor.get().is_some_and(|a| a.0 == page));
+        if !stays {
+            self.guide_spot.set(None);
+            self.guide_anchor.set(own);
+        }
         self.tour_view.replace(Some(view));
     }
 
@@ -3340,16 +4135,17 @@ impl ClaudePanel {
             return;
         }
         let mark = self.guide_mark();
-        let (x, y) = match self.step_offset() {
-            Some((ox, oy)) => {
+        let (card, view, bottom) = (self.guide_size(), self.guide_view(), DOCK_SPACE as f64);
+        let (x, y) = match (self.step_offset(), mark) {
+            (Some((ox, oy)), _) => {
                 let (ax, ay) = mark.map_or((0.0, 0.0), |r| (r.x0, r.y0));
                 self.clamp_card(ax + ox, ay + oy)
             }
-            None => {
-                let (at, side) = card_position_near(mark, self.guide_size(), self.guide_view(), DOCK_SPACE as f64, self.guide_side.get());
-                self.guide_side.set(side);
-                at
+            (None, Some(r)) => {
+                let (ox, oy) = self.card_spot(r);
+                fit_card((r.x0 + ox, r.y0 + oy), card, view, bottom)
             }
+            (None, None) => free_card_position(card, view, bottom),
         };
         let (cx, cy) = (self.guide.margin_start() as f64, self.guide.margin_top() as f64);
         let dragging = self.guide_drag.get().is_some();
@@ -3459,6 +4255,12 @@ mod tests {
         assert!(parse_line(nested).is_empty());
         let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"/a/b.md"}}]}}"#;
         assert_eq!(parse_line(tool), [Event::Tool { text: "Schreibt b.md".into(), lasting: true }]);
+        let (steps, _) = parse_tour(r#"{"schritte":[{"text":"T","denken":{"frage":"F?","optionen":["a","b"],"richtig":1},
+            "landkarte":{"ideen":[{"id":"a","titel":"A","suche":"x"},{"id":"b","titel":"B"},{"id":"c","titel":"C"}],"verbindungen":[["a","b","liefert"],["b","c",""],["c","a","Kreis"]]}}]}"#);
+        assert_eq!(steps[0].think.as_ref().unwrap().right, Some(1));
+        let map = steps[0].map.as_ref().unwrap();
+        assert_eq!(map.links.len(), 3);
+        assert_eq!(idea_rows(map).concat().len(), 3);
         let bad = r#"{"type":"result","is_error":true,"result":"kaputt"}"#;
         assert_eq!(parse_line(bad), [Event::Finished { error: Some("kaputt".into()) }]);
         assert_eq!(parse_line(r#"{"type":"result","is_error":false,"result":"ok"}"#), [Event::Finished { error: None }]);
@@ -3491,20 +4293,33 @@ mod tests {
         assert_eq!(parse_tour(r#"{"vorschlaege":["x"]}"#).1, ["x"]);
     }
 
+    fn spot(marks: &[Rect], ink: impl Fn(&Rect) -> f64) -> (f64, f64) {
+        best_card_spot(Rect::new(12.0, 12.0, 988.0, 716.0), (300.0, 120.0), marks, &[], ink, None)
+    }
+
     #[test]
-    fn card_stays_in_view() {
-        let (card, view) = ((300.0, 120.0), (1000.0, 800.0));
-        // rechts daneben
-        assert_eq!(card_position(Some(Rect::new(100.0, 200.0, 300.0, 240.0)), card, view, 84.0), (328.0, 192.0));
-        // links gestartet bleibt sie links, obwohl rechts inzwischen Platz wäre
-        let (_, side) = card_position_near(Some(Rect::new(500.0, 200.0, 520.0, 240.0)), card, view, 84.0, Some(CardSide::Left));
-        assert_eq!(side, Some(CardSide::Left));
-        // rechts kein Platz: links
-        assert_eq!(card_position(Some(Rect::new(700.0, 200.0, 900.0, 240.0)), card, view, 84.0), (372.0, 192.0));
-        // ganze Breite belegt: darunter
-        assert_eq!(card_position(Some(Rect::new(20.0, 200.0, 980.0, 240.0)), card, view, 84.0), (20.0, 268.0));
-        // ganz unten: bleibt über dem Dock
-        let (_, y) = card_position(Some(Rect::new(20.0, 760.0, 980.0, 790.0)), card, view, 84.0);
+    fn card_stays_close_on_an_empty_page() {
+        let mark = Rect::new(400.0, 300.0, 600.0, 340.0);
+        let (x, y) = spot(&[mark], |_| 0.0);
+        let r = Rect::new(x, y, x + 300.0, y + 120.0);
+        assert!(!r.intersects(&mark.expand(CARD_CLEARANCE)));
+        assert!(rect_gap(&r, &mark) < 40.0);
+    }
+
+    #[test]
+    fn card_avoids_text_and_stays_inside() {
+        let mark = Rect::new(400.0, 300.0, 600.0, 340.0);
+        // Text überall außer in einem Streifen unter dem Zeichen
+        let free = Rect::new(250.0, 350.0, 750.0, 500.0);
+        let (x, y) = spot(&[mark], |r| (r.width() * r.height()) - overlap(r, &free));
+        let r = Rect::new(x, y, x + 300.0, y + 120.0);
+        assert!(overlap(&r, &free) > 0.95 * 300.0 * 120.0, "{r:?}");
+        assert!(r.x0 >= 12.0 && r.x1 <= 988.0 && r.y0 >= 12.0 && r.y1 <= 716.0);
+    }
+
+    #[test]
+    fn free_card_stays_above_the_dock() {
+        let (_, y) = free_card_position((300.0, 120.0), (1000.0, 800.0), 84.0);
         assert!(y + 120.0 <= 800.0 - 84.0);
     }
 }
