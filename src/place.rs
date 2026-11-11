@@ -422,6 +422,8 @@ pub struct InkMap {
 
 /// Zellgröße in Punkten: grob genug, dass ein Wort als volle Fläche zählt.
 const INK_CELL: f64 = 3.0;
+/// Rand um allen Inhalt in Zellen (6 pt): Karten halten Abstand und schneiden nichts an.
+const INK_MARGIN: usize = 2;
 
 impl InkMap {
     fn from_cells(cols: usize, rows: usize, full: impl Fn(usize, usize) -> bool) -> InkMap {
@@ -450,15 +452,37 @@ impl InkMap {
     }
 }
 
-/// Alles Sichtbare einer Seite: PDF, Bilder, Text und Striche.
+/// Alles Sichtbare einer Seite: PDF, Bilder, Text und Striche, samt einem Rand darum.
 pub fn ink_map(page: &PageData) -> Option<InkMap> {
     let (w, h, stride, data) = raster(page, 1.0, true)?;
     let step = INK_CELL as usize;
     let (cols, rows) = (w.div_ceil(step), h.div_ceil(step));
-    let dark = |x: usize, y: usize| luma(&data[y * stride + x * 4..y * stride + x * 4 + 3]) < 190.0;
-    Some(InkMap::from_cells(cols, rows, |cx, cy| {
-        (cy * step..((cy + 1) * step).min(h)).any(|y| (cx * step..((cx + 1) * step).min(w)).any(|x| dark(x, y)))
-    }))
+    // auch hellgrauer Text zählt; getönte Kästen (um 242) nicht
+    let dark = |x: usize, y: usize| luma(&data[y * stride + x * 4..y * stride + x * 4 + 3]) < 225.0;
+    let full: Vec<bool> = (0..rows * cols)
+        .map(|i| {
+            let (cx, cy) = (i % cols, i / cols);
+            (cy * step..((cy + 1) * step).min(h)).any(|y| (cx * step..((cx + 1) * step).min(w)).any(|x| dark(x, y)))
+        })
+        .collect();
+    let grown = grow(&full, cols, rows, INK_MARGIN);
+    Some(InkMap::from_cells(cols, rows, |cx, cy| grown[cy * cols + cx]))
+}
+
+/// Belegte Zellen um `r` Zellen in jede Richtung erweitern.
+fn grow(cells: &[bool], cols: usize, rows: usize, r: usize) -> Vec<bool> {
+    let across: Vec<bool> = (0..rows * cols)
+        .map(|i| {
+            let (x, y) = (i % cols, i / cols);
+            (x.saturating_sub(r)..(x + r + 1).min(cols)).any(|xx| cells[y * cols + xx])
+        })
+        .collect();
+    (0..rows * cols)
+        .map(|i| {
+            let (x, y) = (i % cols, i / cols);
+            (y.saturating_sub(r)..(y + r + 1).min(rows)).any(|yy| across[yy * cols + x])
+        })
+        .collect()
 }
 
 /// Grobe Bereiche an den Inhalt der Seite anlegen. Ohne Inhalt darin bleibt der Bereich.
@@ -912,6 +936,15 @@ mod tests {
         let r = parse_request(r#"{"rueckgaengig":true,"geometrie":[5]}"#).unwrap();
         assert!(r.undo);
         assert_eq!(r.geometry, [4]);
+    }
+
+    #[test]
+    fn content_gets_a_margin() {
+        let mut cells = vec![false; 25];
+        cells[12] = true;
+        let g = grow(&cells, 5, 5, 1);
+        assert_eq!(g.iter().filter(|c| **c).count(), 9);
+        assert!(g[6] && g[18] && !g[0]);
     }
 
     #[test]

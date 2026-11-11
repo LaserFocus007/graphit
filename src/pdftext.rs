@@ -103,6 +103,22 @@ impl PageText {
         hay.windows(q.len()).find(|w| w.iter().map(|e| e.1).eq(q.iter().copied())).map(|w| self.line_rects(w[0].0, w[q.len() - 1].0))
     }
 
+    /// Alle Fundstellen einer Formel: nur Buchstaben, Ziffern und griechische Zeichen zählen,
+    /// Leerzeichen, Operatoren und Bruchstriche dazwischen nicht. Je als Zeilen-Rechtecke.
+    pub fn find_glyphs(&self, query: &str) -> Vec<Vec<Rect>> {
+        let same = |c: char| match c {
+            'ε' => 'ϵ',
+            'φ' => 'ϕ',
+            c => c,
+        };
+        let q: Vec<char> = query.chars().filter(|c| c.is_alphanumeric()).map(same).collect();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let hay: Vec<(usize, char)> = self.chars.iter().enumerate().filter(|(_, c)| c.is_alphanumeric()).map(|(i, c)| (i, same(*c))).collect();
+        hay.windows(q.len()).filter(|w| w.iter().map(|e| e.1).eq(q.iter().copied())).map(|w| self.line_rects(w[0].0, w[q.len() - 1].0)).collect()
+    }
+
     /// Alle Fundstellen (ohne Groß-/Kleinschreibung), je als Zeilen-Rechtecke.
     pub fn find(&self, query: &str) -> Vec<Vec<Rect>> {
         let q: Vec<char> = query.to_lowercase().chars().collect();

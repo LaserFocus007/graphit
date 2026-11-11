@@ -184,7 +184,7 @@ Eine Führung ist die Datei CACHE/fuehrung.json, die du vor dem Ende deiner Antw
   "tipp":"Hilfe, die erst auf Knopfdruck erscheint",
   "quiz":{"optionen":["A","B","C"],"richtig":1,"erklaerung":"Warum B stimmt"},
   "aufgabe":"Was der Nutzer selbst auf der Seite rechnen soll",
-  "terme":[{"bereich":[0.2,0.3,0.28,0.36],"name":"$\\frac{EA}{L}$","erklaerung":"Steifigkeit des Stabs"}],
+  "terme":[{"suche":"EA","bereich":[0.2,0.3,0.28,0.36],"name":"$\\frac{EA}{L}$","erklaerung":"Steifigkeit des Stabs"}],
   "diagramm":{"titel":"Spannung","x":{"name":"Dehnung","min":0,"max":0.01},"y":{"name":"σ in MPa"},
     "kurven":[{"name":"Stahl","formel":"E*x"}],
     "regler":[{"symbol":"E","name":"E-Modul","einheit":"MPa","min":70000,"max":250000,"wert":210000}]}
@@ -198,7 +198,7 @@ Alles außer text ist freiwillig. Die Datei darf auch nur vorschlaege enthalten.
 - quiz nach einem Kerngedanken, damit der Nutzer aktiv nachdenkt, statt nur zu lesen. Falsche Optionen sind typische Denkfehler.
 - aufgabe, wenn Selbermachen mehr bringt als Zuschauen. Der Nutzer rechnet auf der Seite und tippt auf Prüfen; dann bekommst du die aktuelle Seite und gibst Rückmeldung, bei Fehlern mit Führung genau auf seine Stelle.
 - tipp statt der Lösung, wenn der Nutzer selbst darauf kommen kann.
-- terme schlüsseln eine Formel auf der Seite auf: Jeder Term bekommt einen farbigen Rahmen und einen Knopf auf der Karte, der seine erklaerung zeigt. Ein grober bereich reicht, Graphit rastet am Inhalt ein; suche geht auch. Eine Herleitung läuft über mehrere Schritte, je Schritt eine Zeile und ihre terme.
+- terme schlüsseln eine Formel auf der Seite auf: Jeder Term bekommt einen farbigen Rahmen und einen Knopf auf der Karte, der seine erklaerung zeigt. Schätze die Lage nie nach Augenmaß, das liegt oft eine halbe Seite daneben. Hole sie aus CACHE/geometrie-<Seite>.json (aktuelle Seite) oder mit pdftotext -bbox -f N -l N; Formeln stehen dort als Zeichenfolgen wie ϵmach, hp oder EA. Gib als suche die Zeichenfolge des Terms genau so an und dazu als bereich ein Rechteck um genau diese Wörter (Seitenanteile, etwas Rand). Graphit rastet am Inhalt ein. Eine Herleitung läuft über mehrere Schritte, je Schritt eine Zeile und ihre terme.
 - diagramm, wenn ein Zusammenhang durchs Ausprobieren klarer wird. formel nutzt x, die symbol der regler, + - * / ^, sin cos tan exp ln log sqrt abs, pi, e. y ohne min und max skaliert sich selbst.
 - verbinde, wenn zwei Stellen derselben Seite zusammengehören (Formel und Größe, Annahme und Folge).
 Nimm 2 bis 6 Schritte. Mische die Mittel nach Nutzen, höchstens ein Quiz und eine Aufgabe je Führung, außer der Nutzer will üben. vorschlaege: zwei bis drei sinnvolle nächste Fragen in Ich-Form des Nutzers, gib sie fast immer mit."#;
@@ -704,6 +704,53 @@ pub fn parse_tour(json: &str) -> (Vec<Step>, Vec<String>) {
         })
         .collect();
     (steps, hints)
+}
+
+/// Das längste Stück einer LaTeX-Formel, wie es im Text eines PDFs steht: Buchstaben, Ziffern
+/// und griechische Zeichen; Operatoren und Leerraum trennen, denn PDFs ordnen Brüche und Indizes
+/// oft anders an. Nur für Namen mit Formel und Stücke ab drei Zeichen, sonst None.
+fn formula_glyphs(name: &str) -> Option<String> {
+    formula_piece(name, 3)
+}
+
+/// Wie [`formula_glyphs`], mit eigener Mindestlänge des Stücks.
+fn formula_piece(name: &str, min: usize) -> Option<String> {
+    const GREEK: [(&str, char); 22] = [
+        ("varepsilon", 'ϵ'), ("epsilon", 'ϵ'), ("alpha", 'α'), ("beta", 'β'), ("gamma", 'γ'), ("delta", 'δ'), ("lambda", 'λ'), ("mu", 'μ'),
+        ("sigma", 'σ'), ("tau", 'τ'), ("varphi", 'ϕ'), ("phi", 'ϕ'), ("Phi", 'Φ'), ("omega", 'ω'), ("theta", 'θ'), ("pi", 'π'), ("rho", 'ρ'),
+        ("xi", 'ξ'), ("eta", 'η'), ("kappa", 'κ'), ("nu", 'ν'), ("Delta", 'Δ'),
+    ];
+    if !name.contains('$') {
+        return None;
+    }
+    let c: Vec<char> = name.chars().collect();
+    let mut pieces = vec![String::new()];
+    let mut i = 0;
+    while i < c.len() {
+        let x = c[i];
+        if x == '\\' {
+            let mut j = i + 1;
+            while c.get(j).is_some_and(|x| x.is_ascii_alphabetic()) {
+                j += 1;
+            }
+            let cmd: String = c[i + 1..j].iter().collect();
+            match GREEK.iter().find(|(n, _)| *n == cmd) {
+                Some((_, g)) => pieces.last_mut().into_iter().for_each(|p| p.push(*g)),
+                None if ["cdot", "times", "quad", "left", "right", "pm", "approx", "le", "ge", "to"].contains(&cmd.as_str()) => pieces.push(String::new()),
+                None => {}
+            }
+            i = j.max(i + 2);
+            continue;
+        }
+        if x.is_alphanumeric() {
+            pieces.last_mut().into_iter().for_each(|p| p.push(x));
+        } else if "+-=/,()|<>[] ".contains(x) {
+            pieces.push(String::new());
+        }
+        i += 1;
+    }
+    // "hp" steckt auch in "with p…": erst ab drei Zeichen eindeutig genug
+    pieces.into_iter().filter(|p| p.chars().count() >= min).max_by_key(|p| p.chars().count())
 }
 
 /// Lernkarte ohne Stelle auf der Seite: unten mittig über dem Dock.
@@ -4314,12 +4361,40 @@ impl ClaudePanel {
         if let Some((w, h)) = c.page_size(page) {
             let mut found: Vec<(usize, Rect)> = Vec::new();
             let mut rough: Vec<(usize, Rect)> = Vec::new();
+            // Terme gehören meist zur Stelle, die der Schritt markiert
+            let anchors: Vec<Rect> = marks.iter().flat_map(|m| m.rects.iter().copied()).collect();
+            // Schätzungen ohne Fundstelle verschieben sich wie die gefundenen: Claude liegt bei
+            // allen Termen eines Schritts meist gleich daneben
+            let mut guessed: Vec<(usize, Rect, Option<Rect>)> = Vec::new();
             for (k, t) in step.terms.iter().enumerate() {
                 match (t.find.as_ref().and_then(|q| c.find_on_page(q, page)), t.area) {
                     (Some(r), _) if !r.is_empty() => found.push((k, r.iter().skip(1).fold(r[0], |a, b| a.union(b)))),
-                    (_, Some(a)) => rough.push((k, Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h))),
+                    (_, Some(a)) => {
+                        let guess = Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h);
+                        let hit = formula_glyphs(&t.name).and_then(|q| c.find_near(&q, page, guess, &anchors, 0.25));
+                        guessed.push((k, guess, hit));
+                    }
                     _ => {}
                 }
+            }
+            let shifts: Vec<(f64, f64)> = guessed.iter().filter_map(|(_, g, hit)| hit.map(|r| (r.center().x - g.center().x, r.center().y - g.center().y))).collect();
+            let shift = (!shifts.is_empty()).then(|| {
+                let n = shifts.len() as f64;
+                (shifts.iter().map(|s| s.0).sum::<f64>() / n, shifts.iter().map(|s| s.1).sum::<f64>() / n)
+            });
+            for (k, guess, hit) in guessed {
+                // das gefundene Stück rastet dann an der ganzen Formel ein
+                let area = match (hit, shift) {
+                    (Some(r), _) => r.expand(3.0),
+                    (None, Some((dx, dy))) => {
+                        // verschoben liegt die Schätzung nah genug, dass auch kurze Stücke wie "hp" eindeutig werden
+                        let moved = guess.translate(dx, dy);
+                        let near = formula_piece(&step.terms[k].name, 2).and_then(|q| c.find_near(&q, page, moved, &[], 0.06));
+                        near.map_or(moved, |r| r.expand(3.0))
+                    }
+                    (None, None) => guess,
+                };
+                rough.push((k, area));
             }
             let snapped = c.snap_terms(page, &rough.iter().map(|r| r.1).collect::<Vec<_>>());
             found.extend(rough.iter().map(|r| r.0).zip(snapped));
@@ -4524,6 +4599,14 @@ mod tests {
 
     fn spot(marks: &[Rect], ink: impl Fn(&Rect) -> f64) -> (f64, f64) {
         best_card_spot(Rect::new(12.0, 12.0, 988.0, 716.0), (300.0, 120.0), marks, &[], ink).0
+    }
+
+    #[test]
+    fn formula_names_become_glyphs() {
+        assert_eq!(formula_glyphs(r"$\epsilon_{mach}/h$").as_deref(), Some("ϵmach"));
+        assert_eq!(formula_glyphs(r"$\frac{EA}{L}$").as_deref(), Some("EAL"));
+        assert_eq!(formula_glyphs("$h^p$"), None);
+        assert_eq!(formula_glyphs("Steifigkeit"), None);
     }
 
     #[test]

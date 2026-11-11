@@ -178,6 +178,25 @@ impl Canvas {
         text.map(|r| vec![r])
     }
 
+    /// Ein Stück Formel auf der Seite suchen (Seitenkoordinaten). Von mehreren Fundstellen gewinnt
+    /// die, die zugleich nah an der Schätzung `near` und an den Zeichen des Schritts liegt. Weiter
+    /// als `reach` (Anteil der Seitenhöhe) von der Schätzung zählt nicht: dann ist es eine andere Stelle.
+    pub fn find_near(&self, glyphs: &str, page: usize, near: Rect, marks: &[Rect], reach: f64) -> Option<Rect> {
+        let mut st = self.st();
+        let bg = st.doc.pages.get(page)?.borrow().bg.clone();
+        let height = st.doc.pages[page].borrow().height;
+        let hits = st.page_text(page)?.find_glyphs(glyphs);
+        let centre = near.center();
+        let to_marks = |r: &Rect| marks.iter().map(|m| m.center().dist(r.center())).fold(0.0_f64, |a, d| if a == 0.0 { d } else { a.min(d) });
+        hits.iter()
+            .filter_map(|lines| lines.iter().copied().reduce(|a, b| a.union(&b)))
+            .map(|r| to_display(&bg, &r))
+            .filter(|r| r.center().dist(centre) < height * reach)
+            .map(|r| (r, r.center().dist(centre) + to_marks(&r)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(r, _)| r)
+    }
+
     /// Text im PDF oder in Textobjekten suchen, zuerst auf Seite `hint`, dann auf den
     /// übrigen. Liefert Seite und Rechtecke je Zeile.
     pub fn find_text(&self, query: &str, hint: usize) -> Option<(usize, Vec<Rect>)> {
