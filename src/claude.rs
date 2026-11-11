@@ -832,9 +832,18 @@ fn best_card_spot(area: Rect, card: (f64, f64), marks: &[Rect], links: &[Pt], in
         .unwrap_or(((area.x0, area.y0), f64::INFINITY))
 }
 
-/// Lohnt der Umzug? Nur bei deutlich weniger Verdecktem, sonst wackelt die Karte.
-fn worth_moving(now: f64, best: f64) -> bool {
-    now - best > (0.15 * now).max(2500.0)
+/// Bewertung einer Lage: Gesamtkosten und davon verdeckter Inhalt, beides in px².
+#[derive(Clone, Copy, Debug)]
+struct Fit {
+    cost: f64,
+    ink: f64,
+}
+
+/// Lohnt der Umzug? Verdeckt die Karte Text und die neue Stelle kaum noch, immer. Sonst nur
+/// bei deutlich geringeren Kosten, damit die Karte nicht wegen Kleinigkeiten wackelt.
+fn worth_moving(now: Fit, best: Fit) -> bool {
+    let frees_text = now.ink > 400.0 && best.ink < now.ink * 0.5;
+    frees_text || now.cost - best.cost > (0.15 * now.cost).max(2500.0)
 }
 
 /// Berechnete Lage der Karte. Der Abstand zur Stelle steht in Seiteneinheiten, damit die
@@ -854,6 +863,10 @@ struct SpotScene {
     view: (i64, i64),
     card: (i64, i64),
 }
+
+/// Breite der Lernkarte und wie schmal sie werden darf, um in einen freien Rand zu passen.
+const GUIDE_WIDTH: i32 = 350;
+const GUIDE_NARROWEST: i32 = 260;
 
 /// So lange muss Tab gehalten werden, bis das KI-Fenster durchsichtig wird.
 const PEEK_DELAY: Duration = Duration::from_millis(120);
@@ -1315,7 +1328,7 @@ impl ClaudePanel {
         guide.add_css_class("fk-claude-guide");
         guide.set_halign(gtk::Align::Start);
         guide.set_valign(gtk::Align::Start);
-        guide.set_size_request(350, -1);
+        guide.set_size_request(GUIDE_WIDTH, -1);
         guide.set_cursor_from_name(Some("grab"));
         guide.append(&head);
         guide.append(&guide_steps);
@@ -2616,7 +2629,7 @@ impl ClaudePanel {
     }
 
     fn guide_size(&self) -> (f64, f64) {
-        (self.guide.width().max(310) as f64, self.guide.height().max(120) as f64)
+        (self.guide.width().max(GUIDE_NARROWEST) as f64, self.guide.height().max(120) as f64)
     }
 
     fn guide_mark(&self) -> Option<Rect> {
@@ -2647,7 +2660,7 @@ impl ClaudePanel {
 
     /// Beste Lage der Karte für die aktuelle Ansicht als Abstand zu `anchor` in Pixeln, mit
     /// ihren Kosten. Dazu die Kosten der Lage `current`, wenn eine angegeben ist.
-    fn solve_card_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), current: Option<(f64, f64)>) -> ((f64, f64), f64, f64) {
+    fn solve_card_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), current: Option<(f64, f64)>) -> ((f64, f64), Fit, Fit) {
         let c = &view.canvas;
         let (w, h) = self.guide_view();
         let origin = c.compute_point(&self.overlay, &gtk::graphene::Point::new(0.0, 0.0));
@@ -2687,13 +2700,31 @@ impl ClaudePanel {
             .iter()
             .filter_map(|q| self.page_on_overlay(view, page, Rect::new(q.x, q.y, q.x, q.y)).map(|s| Pt::new(s.x0, s.y0)))
             .collect();
-        let ((x, y), best) = best_card_spot(area, card, &marks, &links, &ink);
-        let now = current.map_or(f64::INFINITY, |(cx, cy)| {
+        let ((x, y), cost) = best_card_spot(area, card, &marks, &links, &ink);
+        let best = Fit { cost, ink: ink(&Rect::new(x, y, x + card.0, y + card.1)) };
+        let now = current.map_or(Fit { cost: f64::INFINITY, ink: f64::INFINITY }, |(cx, cy)| {
             // so, wie die Karte wirklich steht: ins Fenster geschoben
             let (fx, fy) = fit_card((anchor.x0 + cx, anchor.y0 + cy), card, (w, h), DOCK_SPACE as f64);
-            card_cost(&Rect::new(fx, fy, fx + card.0, fy + card.1), &marks, &links, &ink)
+            let r = Rect::new(fx, fy, fx + card.0, fy + card.1);
+            Fit { cost: card_cost(&r, &marks, &links, &ink), ink: ink(&r) }
         });
         ((x - anchor.x0, y - anchor.y0), best, now)
+    }
+
+    /// Verdeckt die Karte in voller Breite Inhalt, eine schmalere probieren: Oft ist der freie
+    /// Rand neben dem Text nur knapp zu schmal. Gibt Breite und Abstand zurück, wenn es sich lohnt.
+    fn narrower_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), best: Fit) -> Option<(i32, (f64, f64))> {
+        [320, 290, GUIDE_NARROWEST].into_iter().filter(|w| (*w as f64) < card.0 - 4.0).find_map(|w| {
+            // gleicher Inhalt, schmaler umbrochen: etwa gleiche Fläche
+            let slim = (w as f64, card.1 * card.0 / w as f64);
+            let (offset, fit, _) = self.solve_card_spot(view, page, anchor, slim, None);
+            worth_moving(best, fit).then_some((w, offset))
+        })
+    }
+
+    /// Breite der Karte ändern; die neue Größe löst beim nächsten Bild eine Prüfung der Lage aus.
+    fn slim_card(&self, width: i32) {
+        self.guide.set_size_request(width, -1);
     }
 
     /// Abstand der Karte zur Stelle in Pixeln. Beim Scrollen und Zoomen folgt die Karte ihrer
@@ -2726,14 +2757,29 @@ impl ClaudePanel {
         let settled = now.duration_since(since) >= SPOT_SETTLE && view.canvas.guide_settled();
         match self.guide_spot.get() {
             None => {
-                let (offset, _, _) = self.solve_card_spot(&view, page, anchor, card, None);
+                let (offset, best, _) = self.solve_card_spot(&view, page, anchor, card, None);
+                let offset = match self.narrower_spot(&view, page, anchor, card, best) {
+                    Some((w, slim)) => {
+                        self.slim_card(w);
+                        slim
+                    }
+                    None => offset,
+                };
                 self.guide_spot.set(Some(CardSpot { offset: (offset.0 / zoom, offset.1 / zoom), checked: false }));
                 offset
             }
             Some(s) if settled && !s.checked => {
                 let held = (s.offset.0 * zoom, s.offset.1 * zoom);
                 let (offset, best, current) = self.solve_card_spot(&view, page, anchor, card, Some(held));
-                let offset = if worth_moving(current, best) { offset } else { held };
+                let better = if current.cost < best.cost { current } else { best };
+                let offset = match self.narrower_spot(&view, page, anchor, card, better) {
+                    Some((w, slim)) => {
+                        self.slim_card(w);
+                        slim
+                    }
+                    None if worth_moving(current, best) => offset,
+                    None => held,
+                };
                 self.guide_spot.set(Some(CardSpot { offset: (offset.0 / zoom, offset.1 / zoom), checked: true }));
                 offset
             }
@@ -4385,6 +4431,8 @@ impl ClaudePanel {
     fn show_step(self: &Rc<Self>, i: usize) {
         let Some(step) = self.tour.borrow().get(i).cloned() else { return };
         self.tour_idx.set(i);
+        // jeder Schritt beginnt in voller Breite, schmaler wird die Karte nur bei Bedarf
+        self.guide.set_size_request(GUIDE_WIDTH, -1);
         self.guide_revealed.set(step.think.is_none());
         self.guide_note.set_visible(false);
         self.guide_stuck.set_visible(self.tour_adaptive.get());
@@ -4706,9 +4754,12 @@ mod tests {
 
     #[test]
     fn moves_only_for_a_clear_gain() {
-        assert!(!worth_moving(3000.0, 1000.0));
-        assert!(worth_moving(30000.0, 2000.0));
-        assert!(!worth_moving(30000.0, 27000.0));
+        let fit = |cost, ink| Fit { cost, ink };
+        assert!(!worth_moving(fit(3000.0, 0.0), fit(1000.0, 0.0)));
+        assert!(worth_moving(fit(30000.0, 0.0), fit(2000.0, 0.0)));
+        assert!(!worth_moving(fit(30000.0, 0.0), fit(27000.0, 0.0)));
+        // ein Streifen über dem Text: kleine Kosten, aber die Karte soll ihn freigeben
+        assert!(worth_moving(fit(2600.0, 1800.0), fit(1500.0, 0.0)));
     }
 
     #[test]
