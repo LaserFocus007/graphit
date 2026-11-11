@@ -708,7 +708,7 @@ pub async fn apply(view: &Rc<DocView>, cache: &Path, current: usize, last: &std:
         });
         let (pw, ph) = sheet.size;
         let area_of = |a: [f64; 4]| Rect::new(a[0] * pw, a[1] * ph, a[2] * pw, a[3] * ph);
-        let find = |q: &str| sheet.index.and_then(|i| c.find_on_page(q, i));
+        let find = |q: &str| sheet.index.and_then(|i| c.find_on_page(q, i, None));
 
         // Inhalte ohne Ort
         match &change.content {

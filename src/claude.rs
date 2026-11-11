@@ -715,13 +715,19 @@ fn formula_glyphs(name: &str) -> Option<String> {
 
 /// Wie [`formula_glyphs`], mit eigener Mindestlänge des Stücks.
 fn formula_piece(name: &str, min: usize) -> Option<String> {
+    formula_pieces(name).into_iter().filter(|p| p.chars().count() >= min).max_by_key(|p| p.chars().count())
+}
+
+/// Alle Stücke einer Formel in Schreibreihenfolge, leere ausgelassen.
+fn formula_pieces(name: &str) -> Vec<String> {
     const GREEK: [(&str, char); 22] = [
         ("varepsilon", 'ϵ'), ("epsilon", 'ϵ'), ("alpha", 'α'), ("beta", 'β'), ("gamma", 'γ'), ("delta", 'δ'), ("lambda", 'λ'), ("mu", 'μ'),
         ("sigma", 'σ'), ("tau", 'τ'), ("varphi", 'ϕ'), ("phi", 'ϕ'), ("Phi", 'Φ'), ("omega", 'ω'), ("theta", 'θ'), ("pi", 'π'), ("rho", 'ρ'),
         ("xi", 'ξ'), ("eta", 'η'), ("kappa", 'κ'), ("nu", 'ν'), ("Delta", 'Δ'),
     ];
+    const BIG: [&str; 9] = ["sum", "prod", "int", "oint", "lim", "max", "min", "sup", "inf"];
     if !name.contains('$') {
-        return None;
+        return Vec::new();
     }
     let c: Vec<char> = name.chars().collect();
     let mut pieces = vec![String::new()];
@@ -734,23 +740,42 @@ fn formula_piece(name: &str, min: usize) -> Option<String> {
                 j += 1;
             }
             let cmd: String = c[i + 1..j].iter().collect();
+            i = j.max(i + 2);
             match GREEK.iter().find(|(n, _)| *n == cmd) {
                 Some((_, g)) => pieces.last_mut().into_iter().for_each(|p| p.push(*g)),
-                None if ["cdot", "times", "quad", "left", "right", "pm", "approx", "le", "ge", "to"].contains(&cmd.as_str()) => pieces.push(String::new()),
+                // große Operatoren stehen im PDF als eigenes Zeichen, ihre Grenzen woanders: beides überspringen
+                None if BIG.contains(&cmd.as_str()) => {
+                    pieces.push(String::new());
+                    while matches!(c.get(i), Some('_' | '^')) {
+                        i += 1;
+                        if c.get(i) == Some(&'{') {
+                            let mut depth = 0;
+                            while let Some(&x) = c.get(i) {
+                                i += 1;
+                                depth += (x == '{') as i32 - (x == '}') as i32;
+                                if depth == 0 {
+                                    break;
+                                }
+                            }
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                None if ["cdot", "times", "quad", "qquad", "left", "right", "pm", "approx", "le", "ge", "to", "frac"].contains(&cmd.as_str()) => pieces.push(String::new()),
                 None => {}
             }
-            i = j.max(i + 2);
             continue;
         }
         if x.is_alphanumeric() {
             pieces.last_mut().into_iter().for_each(|p| p.push(x));
-        } else if "+-=/,()|<>[] ".contains(x) {
+        } else if "+-=/,()|<>[]".contains(x) {
             pieces.push(String::new());
         }
         i += 1;
     }
-    // "hp" steckt auch in "with p…": erst ab drei Zeichen eindeutig genug
-    pieces.into_iter().filter(|p| p.chars().count() >= min).max_by_key(|p| p.chars().count())
+    pieces.retain(|p| !p.is_empty());
+    pieces
 }
 
 /// Lernkarte ohne Stelle auf der Seite: unten mittig über dem Dock.
@@ -4021,7 +4046,8 @@ impl ClaudePanel {
         let Some(spec) = &idea.mark else { return };
         let c = &view.canvas;
         let hint = idea.page.unwrap_or_else(|| c.st().current_page()).min(c.page_count().saturating_sub(1));
-        let (page, rects) = match (spec.find.as_ref().and_then(|q| c.find_text(q, hint)), spec.area) {
+        let near = spec.area.zip(c.page_size(hint)).map(|(a, (w, h))| Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h));
+        let (page, rects) = match (spec.find.as_ref().and_then(|q| c.find_text(q, hint, near)), spec.area) {
             (Some(hit), _) => hit,
             (None, Some(a)) => {
                 let Some((w, h)) = c.page_size(hint) else { return };
@@ -4394,7 +4420,9 @@ impl ClaudePanel {
         let mut marks = Vec::new();
         let mut index = vec![None; step.marks.len()];
         for (k, m) in step.marks.iter().enumerate() {
-            let rects = match (m.find.as_ref().and_then(|q| c.find_text(q, hint)), m.area) {
+            // mit Bereich gewinnt die Fundstelle darin, nicht die erste auf der Seite
+            let near = m.area.zip(c.page_size(hint)).map(|(a, (w, h))| Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h));
+            let rects = match (m.find.as_ref().and_then(|q| c.find_text(q, hint, near)), m.area) {
                 (Some((p, r)), _) if *page.get_or_insert(p) == p => r,
                 (_, Some(a)) => {
                     let p = *page.get_or_insert(hint);
@@ -4419,14 +4447,26 @@ impl ClaudePanel {
             // allen Termen eines Schritts meist gleich daneben
             let mut guessed: Vec<(usize, Rect, Option<Rect>)> = Vec::new();
             for (k, t) in step.terms.iter().enumerate() {
-                match (t.find.as_ref().and_then(|q| c.find_on_page(q, page)), t.area) {
+                let near = t.area.map(|a| Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h));
+                match (t.find.as_ref().and_then(|q| c.find_on_page(q, page, near)), t.area) {
                     (Some(r), _) if !r.is_empty() => found.push((k, r.iter().skip(1).fold(r[0], |a, b| a.union(b)))),
                     (_, Some(a)) => {
                         let guess = Rect::new(a[0] * w, a[1] * h, a[2] * w, a[3] * h);
+                        // "hp" steckt auch in "with p…": gesucht wird erst ab drei Zeichen
                         let hit = formula_glyphs(&t.name).and_then(|q| c.find_near(&q, page, guess, &anchors, 0.25));
+                        // die übrigen Stücke des Terms stehen gleich daneben: mit in den Rahmen
+                        let hit = hit.map(|r| {
+                            let close = |q: &String| c.find_beside(q, page, r, 90.0);
+                            formula_pieces(&t.name).iter().filter(|q| q.chars().count() >= 2).filter_map(close).fold(r, |a, b| a.union(&b))
+                        });
                         guessed.push((k, guess, hit));
                     }
                     _ => {}
+                }
+            }
+            if std::env::var("GRAPHIT_PROFILE").is_ok() {
+                for (k, g, hit) in &guessed {
+                    eprintln!("PROFILE Term {k} {:?} Stück {:?} Schätzung {g:?} Fund {hit:?}", step.terms[*k].name, formula_glyphs(&step.terms[*k].name));
                 }
             }
             let shifts: Vec<(f64, f64)> = guessed.iter().filter_map(|(_, g, hit)| hit.map(|r| (r.center().x - g.center().x, r.center().y - g.center().y))).collect();
@@ -4658,6 +4698,9 @@ mod tests {
         assert_eq!(formula_glyphs(r"$\epsilon_{mach}/h$").as_deref(), Some("ϵmach"));
         assert_eq!(formula_glyphs(r"$\frac{EA}{L}$").as_deref(), Some("EAL"));
         assert_eq!(formula_glyphs("$h^p$"), None);
+        assert_eq!(formula_glyphs(r"$t_n+\alpha_i h$").as_deref(), Some("αih"));
+        assert_eq!(formula_glyphs(r"$y_n+h\sum_j\beta_{ij}k_j$").as_deref(), Some("βijkj"));
+        assert_eq!(formula_glyphs(r"$\sum_{j=1}^{s} a_{ij}$").as_deref(), Some("aij"));
         assert_eq!(formula_glyphs("Steifigkeit"), None);
     }
 

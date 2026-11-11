@@ -86,12 +86,13 @@ impl PageText {
         out
     }
 
-    /// Erste Fundstelle ohne Rücksicht auf Leerraum und Zeilenumbrüche.
-    pub fn find_loose(&self, query: &str) -> Option<Vec<Rect>> {
+    /// Text ohne Rücksicht auf Leerraum und Groß-/Kleinschreibung suchen: alle Fundstellen in
+    /// Leserichtung, je als Zeilen-Rechtecke.
+    pub fn find_loose_all(&self, query: &str) -> Vec<Vec<Rect>> {
         let squeeze = |c: &char| !c.is_whitespace();
         let q: Vec<char> = query.to_lowercase().chars().filter(squeeze).collect();
         if q.is_empty() {
-            return None;
+            return Vec::new();
         }
         let hay: Vec<(usize, char)> = self
             .chars
@@ -100,7 +101,7 @@ impl PageText {
             .filter(|(_, c)| squeeze(c))
             .map(|(i, c)| (i, c.to_lowercase().next().unwrap_or(*c)))
             .collect();
-        hay.windows(q.len()).find(|w| w.iter().map(|e| e.1).eq(q.iter().copied())).map(|w| self.line_rects(w[0].0, w[q.len() - 1].0))
+        hay.windows(q.len()).filter(|w| w.iter().map(|e| e.1).eq(q.iter().copied())).map(|w| self.line_rects(w[0].0, w[q.len() - 1].0)).collect()
     }
 
     /// Alle Fundstellen einer Formel: nur Buchstaben, Ziffern und griechische Zeichen zählen,
@@ -139,3 +140,4 @@ impl PageText {
         out
     }
 }
+

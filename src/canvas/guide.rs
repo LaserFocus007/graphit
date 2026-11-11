@@ -163,19 +163,32 @@ impl Canvas {
     }
 
     /// Wie `find_text`, aber nur auf dieser einen Seite.
-    pub fn find_on_page(&self, query: &str, page: usize) -> Option<Vec<Rect>> {
+    pub fn find_on_page(&self, query: &str, page: usize, near: Option<Rect>) -> Option<Vec<Rect>> {
         let mut st = self.st();
+        Self::hits_on_page(&mut st, query, page, near)
+    }
+
+    /// Alle Fundstellen auf einer Seite, aus dem PDF und aus Textobjekten. Von mehreren gewinnt
+    /// die nächste an `near`, ohne Angabe die erste: kurze Suchtexte wie "ki" kommen oft mehrfach vor.
+    fn hits_on_page(st: &mut State, query: &str, page: usize, near: Option<Rect>) -> Option<Vec<Rect>> {
         let q = query.to_lowercase();
         let bg = st.doc.pages.get(page)?.borrow().bg.clone();
-        if let Some(hit) = st.page_text(page).and_then(|t| t.find_loose(query)) {
-            return Some(hit.iter().map(|r| to_display(&bg, r)).collect());
-        }
+        let mut hits: Vec<Vec<Rect>> = st
+            .page_text(page)
+            .map(|t| t.find_loose_all(query))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|lines| lines.iter().map(|r| to_display(&bg, r)).collect())
+            .collect();
         let p = st.doc.pages[page].borrow();
-        let text = p.layers.iter().flat_map(|l| l.items.iter()).find_map(|it| match &**it {
-            Item::Text(t) if t.text.to_lowercase().contains(&q) => Some(t.bbox()),
+        hits.extend(p.layers.iter().flat_map(|l| l.items.iter()).filter_map(|it| match &**it {
+            Item::Text(t) if t.text.to_lowercase().contains(&q) => Some(vec![t.bbox()]),
             _ => None,
-        });
-        text.map(|r| vec![r])
+        }));
+        let Some(near) = near else { return hits.into_iter().next() };
+        let centre = near.center();
+        let dist = |lines: &Vec<Rect>| lines.iter().copied().reduce(|a, b| a.union(&b)).map_or(f64::INFINITY, |r| r.center().dist(centre));
+        hits.into_iter().min_by(|a, b| dist(a).total_cmp(&dist(b)))
     }
 
     /// Ein Stück Formel auf der Seite suchen (Seitenkoordinaten). Von mehreren Fundstellen gewinnt
@@ -197,24 +210,29 @@ impl Canvas {
             .map(|(r, _)| r)
     }
 
+    /// Ein Stück Formel auf derselben Zeile wie `r` suchen, höchstens `gap` Punkte neben dessen Kante.
+    pub fn find_beside(&self, glyphs: &str, page: usize, r: Rect, gap: f64) -> Option<Rect> {
+        let mut st = self.st();
+        let bg = st.doc.pages.get(page)?.borrow().bg.clone();
+        let hits = st.page_text(page)?.find_glyphs(glyphs);
+        let apart = |h: &Rect| (h.x0 - r.x1).max(r.x0 - h.x1).max(0.0);
+        hits.iter()
+            .filter_map(|lines| lines.iter().copied().reduce(|a, b| a.union(&b)))
+            .map(|h| to_display(&bg, &h))
+            .filter(|h| (h.center().y - r.center().y).abs() < r.height().max(h.height()) && apart(h) <= gap)
+            .min_by(|a, b| apart(a).total_cmp(&apart(b)))
+    }
+
     /// Text im PDF oder in Textobjekten suchen, zuerst auf Seite `hint`, dann auf den
-    /// übrigen. Liefert Seite und Rechtecke je Zeile.
-    pub fn find_text(&self, query: &str, hint: usize) -> Option<(usize, Vec<Rect>)> {
+    /// übrigen. Auf `hint` gewinnt die Fundstelle am nächsten an `near`. Liefert Seite und
+    /// Rechtecke je Zeile.
+    pub fn find_text(&self, query: &str, hint: usize, near: Option<Rect>) -> Option<(usize, Vec<Rect>)> {
         let mut st = self.st();
         let n = st.doc.pages.len();
-        let q = query.to_lowercase();
-        for i in std::iter::once(hint.min(n.saturating_sub(1))).chain((0..n).filter(|i| *i != hint)) {
-            let bg = st.doc.pages[i].borrow().bg.clone();
-            if let Some(hit) = st.page_text(i).and_then(|t| t.find_loose(query)) {
-                return Some((i, hit.iter().map(|r| to_display(&bg, r)).collect()));
-            }
-            let p = st.doc.pages[i].borrow();
-            let text = p.layers.iter().flat_map(|l| l.items.iter()).find_map(|it| match &**it {
-                Item::Text(t) if t.text.to_lowercase().contains(&q) => Some(t.bbox()),
-                _ => None,
-            });
-            if let Some(r) = text {
-                return Some((i, vec![r]));
+        let hint = hint.min(n.saturating_sub(1));
+        for i in std::iter::once(hint).chain((0..n).filter(|i| *i != hint)) {
+            if let Some(hit) = Self::hits_on_page(&mut st, query, i, near.filter(|_| i == hint)) {
+                return Some((i, hit));
             }
         }
         None
@@ -231,11 +249,16 @@ impl Canvas {
             match guide_area(&marks, &sketch) {
                 Some(a) => {
                     let l = a.translate(o.x, o.y);
-                    let cut_off = l.height() <= vis.height() && (l.y0 < vis.y0 || l.y1 > vis.y1);
-                    // Ganz unten bliebe der Karte nur Platz über dem Text: kleine Stellen kommen in die obere Hälfte
-                    let low = l.height() < vis.height() * 0.5 && l.center().y > vis.y0 + vis.height() * 0.65;
-                    if !vis.expand(-40.0 / st.zoom).contains(l.center()) || cut_off || low {
-                        to.y = l.center().y - vis.height() * 0.4;
+                    if l.height() <= vis.height() * 0.9 {
+                        let cut_off = l.y0 < vis.y0 || l.y1 > vis.y1;
+                        // Ganz unten bliebe der Karte nur Platz über dem Text: kleine Stellen kommen in die obere Hälfte
+                        let low = l.height() < vis.height() * 0.5 && l.center().y > vis.y0 + vis.height() * 0.65;
+                        if !vis.expand(-40.0 / st.zoom).contains(l.center()) || cut_off || low {
+                            to.y = l.center().y - vis.height() * 0.4;
+                        }
+                    } else if l.y0 < vis.y0 || l.y0 > vis.y0 + vis.height() * 0.4 {
+                        // Passt nicht alles ins Fenster, kommt der Anfang ins Bild: dort steht meist die Formel
+                        to.y = l.y0 - vis.height() * 0.12;
                     }
                     if l.x0 < vis.x0 || l.x1 > vis.x1 {
                         to.x = l.center().x - vis.width() / 2.0;
