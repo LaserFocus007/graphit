@@ -33,6 +33,42 @@ fn switch(title: &str, subtitle: &str, active: bool, on: impl Fn(bool) + 'static
     row
 }
 
+/// Vorlesen: Stand der natürlichen Stimmen und Knopf zum Laden.
+fn voice_group() -> adw::PreferencesGroup {
+    use crate::i18n::tl;
+    let group = adw::PreferencesGroup::builder().title(tl("Vorlesen")).build();
+    let row = adw::ActionRow::builder().title(tl("Natürliche Stimmen")).build();
+    let spinner = gtk::Spinner::new();
+    let button = gtk::Button::builder().label(tl("Installieren")).valign(gtk::Align::Center).build();
+    button.add_css_class("suggested-action");
+    row.add_suffix(&spinner);
+    row.add_suffix(&button);
+    let show = {
+        let (row, button, spinner) = (row.clone(), button.clone(), spinner.clone());
+        move |failed: bool| {
+            let (ready, busy) = (crate::speech::natural_voices(), crate::speech::installing());
+            spinner.set_spinning(busy);
+            button.set_visible(!ready);
+            button.set_sensitive(!busy);
+            row.set_subtitle(match (ready, busy, failed) {
+                (true, ..) => tl("Installiert: Deutsch und Englisch, laufen offline"),
+                (_, true, _) => tl("Wird geladen, etwa 250 MB …"),
+                (_, _, true) => tl("Laden fehlgeschlagen. Internetverbindung prüfen und erneut versuchen."),
+                _ => tl("Nicht installiert, Vorlesen klingt blechern. Etwa 250 MB, danach offline."),
+            });
+        }
+    };
+    show(false);
+    let refresh = std::rc::Rc::new(show);
+    button.connect_clicked(move |_| {
+        let after = refresh.clone();
+        crate::speech::install(move |ok| after(!ok));
+        refresh(false);
+    });
+    group.add(&row);
+    group
+}
+
 fn calib_subtitle(lo: f64, hi: f64) -> String {
     if lo <= 0.001 && hi >= 0.999 {
         crate::i18n::tl("Nicht kalibriert: voller Druckbereich des Stifts").into()
@@ -264,6 +300,7 @@ pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas) {
     let exams = (!cfg.exam_root.is_empty()).then(|| std::path::PathBuf::from(&cfg.exam_root));
     folders.add(&crate::welcome::folder_row(crate::i18n::tl("Altklausuren"), &dialog, Rc::new(RefCell::new(exams)), crate::i18n::tl("Old_exams im Notizordner"), Rc::new(move |p| update(&cc, |s| s.exam_root = p.display().to_string()))));
     page.add(&folders);
+    page.add(&voice_group());
     let about = adw::PreferencesGroup::builder().title(crate::i18n::tl("Programm")).description(crate::tr!("Installiert: Version {}", "Installed: version {}", env!("CARGO_PKG_VERSION"))).build();
     let cc = c.clone();
     about.add(&switch(crate::i18n::tl("Nach neuen Versionen suchen"), crate::i18n::tl("Fragt höchstens einmal am Tag bei GitHub nach. GitHub sieht dabei deine IP-Adresse."), cfg.update_check, move |on| update(&cc, |s| s.update_check = on)));

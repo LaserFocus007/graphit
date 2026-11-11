@@ -81,7 +81,7 @@ On first launch, choose your notes folder. The interface is available in English
 |---|---|
 | AI features | [Claude Code](https://claude.com/claude-code), installed and signed in with your own account |
 | Formulas in answers | `pdflatex` and `pandoc`, installed as recommended packages |
-| Natural reading voice | Run `/usr/share/graphit/install-voice.sh` (English) or `install-voice.sh de` (German), about 90 MB |
+| Natural reading voice | Settings → General → Read aloud → Install, or run `/usr/share/graphit/install-voice.sh`. About 250 MB for English and German |
 
 Graphit works fully as a note-taking app without any of these.
 

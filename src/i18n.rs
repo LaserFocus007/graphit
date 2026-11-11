@@ -25,11 +25,6 @@ pub fn tl(de: &'static str) -> &'static str {
     TABLE.get_or_init(|| EN.iter().copied().collect()).get(de).copied().unwrap_or(de)
 }
 
-/// Selects a word for the current language.
-pub fn pick(de: &'static str, en: &'static str) -> &'static str {
-    if english() { en } else { de }
-}
-
 /// `format!` in the current language: German first, then English, then the arguments.
 #[macro_export]
 macro_rules! tr {
@@ -241,6 +236,14 @@ static EN: &[(&str, &str)] = &[
     ("Mittel", "Medium"),
     ("Modell für die nächste Frage", "Model for the next question"),
     ("Nach neuen Versionen suchen", "Check for new versions"),
+    ("Vorlesen", "Read aloud"),
+    ("Natürliche Stimmen", "Natural voices"),
+    ("Installieren", "Install"),
+    ("Installiert: Deutsch und Englisch, laufen offline", "Installed: German and English, work offline"),
+    ("Wird geladen, etwa 250 MB …", "Downloading, about 250 MB …"),
+    ("Laden fehlgeschlagen. Internetverbindung prüfen und erneut versuchen.", "Download failed. Check the internet connection and try again."),
+    ("Nicht installiert, Vorlesen klingt blechern. Etwa 250 MB, danach offline.", "Not installed, reading aloud sounds robotic. About 250 MB, then offline."),
+    ("Natürlicher klingt es mit den Stimmen unter Einstellungen → Allgemein → Vorlesen", "For a natural voice, install it under Settings → General → Read aloud"),
     ("Nach oben", "Move up"),
     ("Nach unten", "Move down"),
     ("Nachfragen", "Follow up"),

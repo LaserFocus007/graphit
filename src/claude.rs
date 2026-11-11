@@ -749,7 +749,7 @@ fn best_card_spot(area: Rect, card: (f64, f64), marks: &[Rect], links: &[Pt], in
         let dist = if dist.is_finite() { dist } else { 0.0 };
         let crossed = links.iter().filter(|p| r.contains(**p)).count() as f64;
         let moved = near.map_or(0.0, |(nx, ny)| (x - nx).hypot(y - ny));
-        (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(&r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed + 8.0 * moved
+        (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(&r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed + 30.0 * moved
     };
     let span = |a: f64, b: f64| ((b - a).max(0.0) / GRID).ceil() as usize;
     let (xmax, ymax) = (area.x1 - cw, area.y1 - ch);
@@ -1377,6 +1377,9 @@ impl ClaudePanel {
         self.guide_speak.connect_toggled(move |b| {
             let Some(p) = w.upgrade() else { return };
             if b.is_active() {
+                if crate::speech::hint_install() {
+                    (p.toast)(crate::i18n::tl("Natürlicher klingt es mit den Stimmen unter Einstellungen → Allgemein → Vorlesen"));
+                }
                 p.read_step();
             } else {
                 p.speaker.stop();
@@ -3537,28 +3540,33 @@ impl ClaudePanel {
 
     /// Denkschritt: Die Frage steht zuerst da, alles Weitere erscheint nach der Antwort.
     fn add_think(self: &Rc<Self>, step: &Step, think: &Think) {
+        // nur was gerade zu sehen ist: Absichtlich verborgenes bleibt beim Aufdecken verborgen
         let mut hidden = Vec::new();
         let mut child = self.guide_extra.first_child();
         while let Some(c) = child {
             child = c.next_sibling();
-            c.set_visible(false);
-            hidden.push(c);
+            if c.is_visible() {
+                c.set_visible(false);
+                hidden.push(c);
+            }
         }
-        let verdict = self.extra_text("");
-        verdict.root.set_visible(false);
+        // Die Frage bleibt stehen, die Erklärung erscheint unter der Antwort
+        let answer = self.extra_text("");
+        answer.root.set_visible(false);
         let text = index::marks(&step.text).clean;
         let reveal: Rc<dyn Fn(&Rc<ClaudePanel>, Option<bool>)> = {
-            let (hidden, verdict, text) = (hidden, verdict.clone(), text);
+            let (hidden, answer) = (hidden, answer.clone());
             Rc::new(move |p, correct| {
                 p.guide_revealed.set(true);
-                p.guide_text.set(&text, &p.engine);
                 for c in &hidden {
                     c.set_visible(true);
                 }
-                if let Some(ok) = correct {
-                    verdict.set(if ok { crate::i18n::tl("**Richtig.**") } else { crate::i18n::tl("**Nicht ganz.**") }, &p.engine);
-                    verdict.root.set_visible(true);
-                }
+                let shown = match correct {
+                    Some(ok) => format!("{} {text}", if ok { crate::i18n::tl("**Richtig.**") } else { crate::i18n::tl("**Nicht ganz.**") }),
+                    None => text.clone(),
+                };
+                answer.set(&shown, &p.engine);
+                answer.root.set_visible(true);
                 if p.guide_speak.is_active() {
                     p.read_step();
                 }
@@ -3575,7 +3583,10 @@ impl ClaudePanel {
                     show(&p, None);
                 }
             });
-            self.guide_extra.prepend(&b);
+            let box_ = gtk::Box::new(gtk::Orientation::Vertical, 6);
+            box_.append(&b);
+            box_.append(&answer.root);
+            self.guide_extra.prepend(&box_);
             return;
         }
         let buttons: Rc<RefCell<Vec<gtk::Button>>> = Rc::default();
@@ -3606,7 +3617,7 @@ impl ClaudePanel {
             buttons.borrow_mut().push(b.clone());
             box_.append(&b);
         }
-        box_.append(&verdict.root);
+        box_.append(&answer.root);
         self.guide_extra.prepend(&box_);
     }
 
