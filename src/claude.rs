@@ -830,6 +830,9 @@ struct SpotScene {
     card: (i64, i64),
 }
 
+/// So lange muss Tab gehalten werden, bis das KI-Fenster durchsichtig wird.
+const PEEK_DELAY: Duration = Duration::from_millis(120);
+
 /// So lange muss alles ruhen, bevor die Karte ihre Lage neu prüft.
 const SPOT_SETTLE: Duration = Duration::from_millis(250);
 
@@ -1016,6 +1019,10 @@ pub struct ClaudePanel {
     step_next: gtk::Button,
     /// Fokus-Design zeigt eine frühere Antwort: Nachrichten ab hier bleiben ausgeblendet
     focus_until: Cell<Option<usize>>,
+    /// Tab wird gehalten: kurz warten, ob es nur ein Tipp ist
+    peek_timer: RefCell<Option<glib::SourceId>>,
+    /// KI-Fenster ist zum Durchschauen aufgelöst
+    peeking: Cell<bool>,
 }
 
 const A11Y_SCHEMA: &str = "org.gnome.desktop.a11y.applications";
@@ -1396,6 +1403,8 @@ impl ClaudePanel {
             step_prev,
             step_next,
             focus_until: Cell::new(None),
+            peek_timer: RefCell::new(None),
+            peeking: Cell::new(false),
         });
         panel.connect();
         panel.connect_grip(&grip);
@@ -1666,6 +1675,48 @@ impl ClaudePanel {
                 a.set_value(a.upper() - a.page_size());
             }
         });
+    }
+
+    /// Tab gehalten: das schwebende Fenster löst sich auf, damit der Text darunter lesbar wird.
+    /// Erst nach einem Moment, damit ein kurzer Tipp nicht aufblitzt. Gibt zurück, ob Tab dafür
+    /// verbraucht ist; gehaltenes Tab wiederholt sich, das ändert nichts.
+    pub fn peek_down(self: &Rc<Self>) -> bool {
+        if !self.is_open() || self.pinned.get() {
+            return false;
+        }
+        if self.peeking.get() || self.peek_timer.borrow().is_some() {
+            return true;
+        }
+        let w = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(PEEK_DELAY, move || {
+            if let Some(p) = w.upgrade() {
+                p.peek_timer.replace(None);
+                p.set_peek(true);
+            }
+        });
+        self.peek_timer.replace(Some(id));
+        true
+    }
+
+    /// Tab losgelassen, eine andere Taste gedrückt oder das Fenster verlassen: wieder zeigen.
+    pub fn peek_up(&self) {
+        if let Some(id) = self.peek_timer.take() {
+            id.remove();
+        }
+        self.set_peek(false);
+    }
+
+    fn set_peek(&self, on: bool) {
+        if self.peeking.replace(on) == on {
+            return;
+        }
+        if on {
+            self.card.add_css_class("fk-peek");
+        } else {
+            self.card.remove_css_class("fk-peek");
+        }
+        // aufgelöst nimmt es keine Klicks an: Stift und Finger erreichen die Seite darunter
+        self.card.set_can_target(!on);
     }
 
     /// Breite des schwebenden Fensters im jeweiligen Design.
@@ -2706,6 +2757,7 @@ impl ClaudePanel {
     }
 
     pub fn close(&self) {
+        self.peek_up();
         self.hide_keyboard();
         self.speaker.stop();
         self.followup.replace(None);

@@ -42,7 +42,7 @@ Graphit is a native handwriting app for Linux tablets and convertibles. It opens
 
 ## A study companion on the page
 
-Press <kbd>Esc</kbd> and ask. Claude sees the page you are on and answers next to your work, with typeset formulas. Each course folder keeps its own conversation.
+Press <kbd>Esc</kbd> and ask. Claude sees the page you are on and answers next to your work, with typeset formulas. Each course folder keeps its own conversation. Hold <kbd>Tab</kbd> to see through the window to the text underneath. Two designs are available: the classic window and a focus design with a search bar and only the latest answer.
 
 <table>
   <tr>

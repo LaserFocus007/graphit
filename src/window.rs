@@ -109,6 +109,13 @@ button.fk-claude-insert:hover { background-color: alpha(white, .08); color: #f1f
 .fk-claude-seg-on { background-color: #f1f0ed; }
 button.fk-claude-next { background-color: #f1f0ed; color: #18181b; border-radius: 11px; padding: 4px 16px; }
 button.fk-claude-next:hover { background-color: white; }
+/* Durchschauen: Tab gehalten löst das KI-Fenster zu einem feinen Umriss auf */
+.fk-claude, .fk-claude > *, .fk-claude-bar, .fk-claude-bar > *, .fk-claude-sheet, .fk-claude-sheet > * {
+  transition: opacity 200ms cubic-bezier(.2, .8, .2, 1), background-color 200ms ease-out, box-shadow 200ms ease-out; }
+.fk-claude.fk-peek:not(.fk-focus), .fk-focus.fk-peek .fk-claude-bar, .fk-focus.fk-peek .fk-claude-sheet {
+  background-color: alpha(#1f1f23, 0);
+  box-shadow: 0 0 0 1.5px alpha(#d97757, .75), 0 0 22px alpha(#d97757, .16), inset 0 0 0 1px alpha(white, 0); }
+.fk-claude.fk-peek:not(.fk-focus) > *, .fk-focus.fk-peek .fk-claude-bar > *, .fk-focus.fk-peek .fk-claude-sheet > * { opacity: 0; }
 /* KI-Fenster im Fokus-Design: schlanke Suchkapsel, darunter eine eigene, ruhige Karte */
 .fk-claude.fk-focus { background: none; box-shadow: none; border-radius: 0; }
 .fk-focus .fk-claude-bar { background-color: #1c1c20; border-radius: 22px; padding: 3px 5px 3px 14px; min-height: 36px;
@@ -492,6 +499,42 @@ impl Win {
             }
         });
         win.window.add_controller(arrows);
+
+        // Tab halten: KI-Fenster durchsichtig, um den Text darunter zu lesen. Solange es offen
+        // ist, gehört Tab dafür und springt nicht durch die Knöpfe.
+        let keylog = std::env::var("GRAPHIT_KEYLOG").is_ok();
+        let peek = gtk::EventControllerKey::new();
+        peek.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let w = Rc::downgrade(&win);
+        peek.connect_key_pressed(move |_, key, code, mods| {
+            if keylog {
+                eprintln!("KEY press {:?} code {code} mods {mods:?}", key.name());
+            }
+            let Some(w) = w.upgrade() else { return glib::Propagation::Proceed };
+            match key {
+                gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab if w.claude.peek_down() => glib::Propagation::Stop,
+                _ => {
+                    w.claude.peek_up();
+                    glib::Propagation::Proceed
+                }
+            }
+        });
+        let w = Rc::downgrade(&win);
+        peek.connect_key_released(move |_, key, code, mods| {
+            if keylog {
+                eprintln!("KEY release {:?} code {code} mods {mods:?}", key.name());
+            }
+            if let (Some(w), gdk::Key::Tab | gdk::Key::ISO_Left_Tab | gdk::Key::KP_Tab) = (w.upgrade(), key) {
+                w.claude.peek_up();
+            }
+        });
+        win.window.add_controller(peek);
+        let w = Rc::downgrade(&win);
+        win.window.connect_is_active_notify(move |window| {
+            if let Some(w) = w.upgrade().filter(|_| !window.is_active()) {
+                w.claude.peek_up();
+            }
+        });
 
         let w = Rc::downgrade(&win);
         win.tabs.connect_selected_page_notify(move |_| {
