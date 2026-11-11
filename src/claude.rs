@@ -735,40 +735,56 @@ fn overlap(a: &Rect, b: &Rect) -> f64 {
     if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
 }
 
-/// Die Stelle in `area`, an der die Karte nah an den Zeichen steht und wenig Inhalt
-/// verdeckt. Zeichen selbst bleiben frei, solange das irgendwie geht. Kosten in px²:
-/// verdeckter Inhalt zählt voll, Entfernung leicht und mit Abstand immer stärker.
-/// `near` hält die Karte bei einer Neuberechnung in der Nähe ihrer bisherigen Lage.
-fn best_card_spot(area: Rect, card: (f64, f64), marks: &[Rect], links: &[Pt], ink: impl Fn(&Rect) -> f64, near: Option<(f64, f64)>) -> (f64, f64) {
+/// Was die Karte an einer Stelle kostet, in px²: verdeckter Inhalt zählt voll, Entfernung
+/// zu den Zeichen leicht und mit Abstand immer stärker. Zeichen selbst bleiben frei, solange
+/// das irgendwie geht.
+fn card_cost(r: &Rect, marks: &[Rect], links: &[Pt], ink: &impl Fn(&Rect) -> f64) -> f64 {
+    let blocked: f64 = marks.iter().map(|m| overlap(r, &m.expand(CARD_CLEARANCE))).sum();
+    let dist = marks.iter().map(|m| rect_gap(r, m)).fold(f64::INFINITY, f64::min);
+    let dist = if dist.is_finite() { dist } else { 0.0 };
+    let crossed = links.iter().filter(|p| r.contains(**p)).count() as f64;
+    (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed
+}
+
+/// Die günstigste Stelle in `area` und ihre Kosten.
+fn best_card_spot(area: Rect, card: (f64, f64), marks: &[Rect], links: &[Pt], ink: impl Fn(&Rect) -> f64) -> ((f64, f64), f64) {
     const GRID: f64 = 12.0;
     let (cw, ch) = card;
-    let cost = |x: f64, y: f64| {
-        let r = Rect::new(x, y, x + cw, y + ch);
-        let blocked: f64 = marks.iter().map(|m| overlap(&r, &m.expand(CARD_CLEARANCE))).sum();
-        let dist = marks.iter().map(|m| rect_gap(&r, m)).fold(f64::INFINITY, f64::min);
-        let dist = if dist.is_finite() { dist } else { 0.0 };
-        let crossed = links.iter().filter(|p| r.contains(**p)).count() as f64;
-        let moved = near.map_or(0.0, |(nx, ny)| (x - nx).hypot(y - ny));
-        (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(&r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed + 30.0 * moved
-    };
     let span = |a: f64, b: f64| ((b - a).max(0.0) / GRID).ceil() as usize;
     let (xmax, ymax) = (area.x1 - cw, area.y1 - ch);
     let axis = |lo: f64, hi: f64| (0..=span(lo, hi)).map(move |k| (lo + k as f64 * GRID).min(hi.max(lo)));
     axis(area.x0, xmax)
         .flat_map(|x| axis(area.y0, ymax).map(move |y| (x, y)))
-        .map(|(x, y)| ((x, y), cost(x, y)))
+        .map(|(x, y)| ((x, y), card_cost(&Rect::new(x, y, x + cw, y + ch), marks, links, &ink)))
         .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map_or((area.x0, area.y0), |s| s.0)
+        .unwrap_or(((area.x0, area.y0), f64::INFINITY))
 }
 
-/// Berechnete Lage der Karte, als Abstand zur Stelle.
+/// Lohnt der Umzug? Nur bei deutlich weniger Verdecktem, sonst wackelt die Karte.
+fn worth_moving(now: f64, best: f64) -> bool {
+    now - best > (0.15 * now).max(2500.0)
+}
+
+/// Berechnete Lage der Karte. Der Abstand zur Stelle steht in Seiteneinheiten, damit die
+/// Karte beim Zoomen mit dem Inhalt mitgeht.
 #[derive(Clone, Copy)]
 struct CardSpot {
     offset: (f64, f64),
-    card: (f64, f64),
-    view: (f64, f64),
-    zoom: f64,
+    /// Lage nach der letzten Ruhe schon geprüft
+    checked: bool,
 }
+
+/// Was die Lage der Karte bestimmt: Ansicht, Zoom, Fenster und Größe der Karte.
+#[derive(Clone, Copy, PartialEq)]
+struct SpotScene {
+    cam: (i64, i64),
+    zoom: i64,
+    view: (i64, i64),
+    card: (i64, i64),
+}
+
+/// So lange muss alles ruhen, bevor die Karte ihre Lage neu prüft.
+const SPOT_SETTLE: Duration = Duration::from_millis(250);
 
 // ------------------------------------------------------------------------ Dialog
 
@@ -778,6 +794,8 @@ const DOCK_SPACE: i32 = 84;
 const MIN_ANSWER: i32 = 90;
 /// Breite des schwebenden Fensters
 const CARD_WIDTH: i32 = 620;
+/// Breite im Fokus-Design: Antworten mit Formeln brauchen Platz
+const FOCUS_WIDTH: i32 = 820;
 /// Grenzen der angehefteten Spalte
 const COLUMN_WIDTH: (i32, i32) = (360, 640);
 /// Platz, den das Dock neben der Spalte braucht
@@ -916,6 +934,8 @@ pub struct ClaudePanel {
     guide_offsets: RefCell<Vec<Option<(f64, f64)>>>,
     /// Bisherige Seite der Karte, damit sie beim Scrollen nicht hin und her wechselt
     guide_spot: Cell<Option<CardSpot>>,
+    /// zuletzt gesehene Ansicht und seit wann sie so steht
+    spot_scene: Cell<Option<(SpotScene, std::time::Instant)>>,
     /// Inhalt der Seiten fürs Platzieren, mit dem Stand der Notiz
     guide_ink: RefCell<HashMap<usize, (u64, Rc<place::InkMap>)>>,
     /// Führung passt sich an, wenn der Nutzer nicht weiterkommt
@@ -936,6 +956,19 @@ pub struct ClaudePanel {
     move_from: Cell<Option<(f64, f64, f64, f64)>>,
     /// Graphit hat die Bildschirmtastatur eingeschaltet und schaltet sie wieder aus
     keyboard_on: Cell<bool>,
+    /// Fokus-Design: Suchleiste oben, darunter eine Karte nur mit der aktuellen Antwort
+    focus: Cell<bool>,
+    /// Karte unter der Suchleiste im Fokus-Design
+    sheet: gtk::Box,
+    /// leuchtende Linie, solange Claude arbeitet
+    glow: gtk::Box,
+    /// Blättern durch frühere Antworten im Fokus-Design
+    stepper: gtk::Box,
+    step_label: gtk::Label,
+    step_prev: gtk::Button,
+    step_next: gtk::Button,
+    /// Fokus-Design zeigt eine frühere Antwort: Nachrichten ab hier bleiben ausgeblendet
+    focus_until: Cell<Option<usize>>,
 }
 
 const A11Y_SCHEMA: &str = "org.gnome.desktop.a11y.applications";
@@ -1114,6 +1147,27 @@ impl ClaudePanel {
         pin_head.append(&pin_title);
         pin_head.append(&pin_close);
 
+        // Fokus-Design: Blättern durch frühere Antworten, Leuchtlinie und eigene Karte
+        let step_label = gtk::Label::new(None);
+        step_label.add_css_class("fk-claude-step-label");
+        let step_prev = gtk::Button::from_icon_name("go-previous-symbolic");
+        round(&step_prev, crate::i18n::tl("Frühere Antwort"));
+        let step_next = gtk::Button::from_icon_name("go-next-symbolic");
+        round(&step_next, crate::i18n::tl("Spätere Antwort"));
+        let stepper = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        stepper.add_css_class("fk-claude-stepper");
+        stepper.append(&step_prev);
+        stepper.append(&step_label);
+        stepper.append(&step_next);
+        stepper.set_visible(false);
+        // in der Fußleiste, damit die Antwort keine eigene Zeile dafür braucht
+        foot.insert_child_after(&stepper, Some(&fill));
+        let glow = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        glow.add_css_class("fk-claude-glow");
+        glow.set_visible(false);
+        let sheet = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        sheet.add_css_class("fk-claude-sheet");
+
         let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
         card.add_css_class("fk-claude");
         for w in [handle.upcast_ref::<gtk::Widget>(), pin_head.upcast_ref(), bar.upcast_ref(), pad_revealer.upcast_ref(), revealer.upcast_ref(), quick.upcast_ref(), foot.upcast_ref()] {
@@ -1166,18 +1220,18 @@ impl ClaudePanel {
         ask.add_css_class("flat");
         let guide_next = gtk::Button::with_label(crate::i18n::tl("Weiter"));
         guide_next.add_css_class("fk-claude-next");
-        let foot = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let guide_foot = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         let fill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         fill.set_hexpand(true);
-        foot.append(&guide_prev);
-        foot.append(&ask);
+        guide_foot.append(&guide_prev);
+        guide_foot.append(&ask);
         let guide_stuck = gtk::Button::with_label(crate::i18n::tl("Versteh ich nicht"));
         guide_stuck.add_css_class("flat");
         guide_stuck.set_visible(false);
         guide_stuck.set_tooltip_text(Some(crate::i18n::tl("Claude baut hier einen einfacheren Zwischenschritt ein")));
-        foot.append(&guide_stuck);
-        foot.append(&fill);
-        foot.append(&guide_next);
+        guide_foot.append(&guide_stuck);
+        guide_foot.append(&fill);
+        guide_foot.append(&guide_next);
         let guide = gtk::Box::new(gtk::Orientation::Vertical, 8);
         guide.add_css_class("fk-claude-guide");
         guide.set_halign(gtk::Align::Start);
@@ -1195,7 +1249,7 @@ impl ClaudePanel {
         guide_note.add_css_class("fk-claude-kind-detail");
         guide_note.set_visible(false);
         guide.append(&guide_note);
-        guide.append(&foot);
+        guide.append(&guide_foot);
         guide.set_visible(false);
 
         let panel = Rc::new(ClaudePanel {
@@ -1275,6 +1329,7 @@ impl ClaudePanel {
             guide_placed: Cell::new(false),
             guide_offsets: RefCell::new(Vec::new()),
             guide_spot: Cell::new(None),
+            spot_scene: Cell::new(None),
             guide_ink: RefCell::default(),
             tour_adaptive: Cell::new(false),
             guide_revealed: Cell::new(false),
@@ -1286,6 +1341,14 @@ impl ClaudePanel {
             pos: Cell::new(if cfg.claude_x >= 0.0 { (cfg.claude_x, cfg.claude_y) } else { CARD_HOME }),
             move_from: Cell::new(None),
             keyboard_on: Cell::new(false),
+            focus: Cell::new(false),
+            sheet,
+            glow,
+            stepper,
+            step_label,
+            step_prev,
+            step_next,
+            focus_until: Cell::new(None),
         });
         panel.connect();
         panel.connect_grip(&grip);
@@ -1441,6 +1504,14 @@ impl ClaudePanel {
                 p.show_history(b.is_active());
             }
         });
+        for (button, d) in [(self.step_prev.clone(), -1), (self.step_next.clone(), 1)] {
+            let w = Rc::downgrade(self);
+            button.connect_clicked(move |_| {
+                if let Some(p) = w.upgrade() {
+                    p.focus_step(d);
+                }
+            });
+        }
         let w = Rc::downgrade(self);
         self.new_btn.connect_clicked(move |_| {
             if let Some(p) = w.upgrade() {
@@ -1543,10 +1614,16 @@ impl ClaudePanel {
         });
         let w = Rc::downgrade(self);
         adj.connect_upper_notify(move |a| {
-            if w.upgrade().is_some_and(|p| p.stick.get()) {
+            // im Fokus-Design beginnt eine Antwort oben und bleibt dort
+            if w.upgrade().is_some_and(|p| p.stick.get() && !p.focus.get()) {
                 a.set_value(a.upper() - a.page_size());
             }
         });
+    }
+
+    /// Breite des schwebenden Fensters im jeweiligen Design.
+    fn card_width(&self) -> i32 {
+        if self.focus.get() { FOCUS_WIDTH } else { CARD_WIDTH }
     }
 
     pub fn is_open(&self) -> bool {
@@ -1556,10 +1633,10 @@ impl ClaudePanel {
     /// Ort und Größe des schwebenden Fensters im aktuellen Graphit-Fenster.
     fn card_rect(&self) -> (i32, i32, i32, i32) {
         let (ow, oh) = (self.overlay.width(), self.overlay.height());
-        let width = ow.min(CARD_WIDTH + 32) - 32;
+        let width = ow.min(self.card_width() + 32) - 32;
         let (_, natural, _, _) = self.clamp.measure(gtk::Orientation::Vertical, width);
         let height = natural.min(oh - 16);
-        let (fx, fy) = self.pos.get();
+        let (fx, fy) = if self.focus.get() { CARD_HOME } else { self.pos.get() };
         let x = (fx * (ow - width) as f64).round() as i32;
         // wächst die Antwort über den Rand, weicht das Fenster nach oben aus
         let y = ((fy * oh as f64).round() as i32).min(oh - height - 8).max(8);
@@ -1572,7 +1649,8 @@ impl ClaudePanel {
         let typed = !self.entry.text().is_empty() || !self.attachments.borrow().is_empty() || !self.strokes.borrow().is_empty();
         let pinned = self.pinned.get();
         let used = self.conv.borrow().as_ref().map_or(0, |c| c.context.get());
-        self.context_btn.set_visible(used > 0);
+        // im Fokus-Design nur, wenn es bald zusammengefasst werden sollte
+        self.context_btn.set_visible(used > 0 && (!self.focus.get() || used >= COMPACT_IDLE_AT));
         self.context_btn.set_label(&crate::tr!("Kontext {}k", "Context {}k", (used + 500) / 1000));
         if used >= COMPACT_IDLE_AT {
             self.context_btn.add_css_class("fk-claude-context-high");
@@ -2099,6 +2177,11 @@ impl ClaudePanel {
 
     /// Umschalten, während das Fenster offen ist: das Gespräch bleibt stehen.
     fn set_pinned(self: &Rc<Self>, on: bool) {
+        // im Fokus-Design liegt alles auf der Karte unter der Suchleiste, eine Spalte gibt es dort nicht
+        if on && self.focus.get() {
+            self.pin_btn.set_active(false);
+            return;
+        }
         self.history_btn.set_active(false);
         self.pinned.set(on);
         self.clamp.set_visible(false);
@@ -2133,6 +2216,78 @@ impl ClaudePanel {
         }
     }
 
+    /// Zwischen klassischem Fenster und Fokus-Design wechseln. Im Fokus liegt alles unter
+    /// der Suchleiste auf einer eigenen Karte; angeheftet wird dort nicht.
+    fn set_focus(self: &Rc<Self>, on: bool) {
+        if self.focus.get() == on {
+            return;
+        }
+        if on && self.pinned.get() {
+            self.set_pinned(false);
+        }
+        self.focus.set(on);
+        self.focus_until.set(None);
+        let parts = [self.pad_revealer.upcast_ref::<gtk::Widget>(), self.revealer.upcast_ref(), self.quick.upcast_ref(), self.foot.upcast_ref()];
+        if on {
+            for w in parts {
+                self.card.remove(w);
+                self.sheet.append(w);
+            }
+            self.sheet.prepend(&self.glow);
+            self.card.append(&self.sheet);
+            self.card.add_css_class("fk-focus");
+        } else {
+            self.sheet.remove(&self.glow);
+            for w in parts {
+                self.sheet.remove(w);
+                self.card.append(w);
+            }
+            self.card.remove(&self.sheet);
+            self.card.remove_css_class("fk-focus");
+            self.mount();
+        }
+        let width = self.card_width();
+        self.clamp.set_maximum_size(width);
+        self.clamp.set_tightening_threshold(width);
+        self.pin_btn.set_visible(!on);
+        self.handle.set_visible(!on && !self.pinned.get());
+        // im Fokus wächst die Antwort von selbst bis zum Platz im Fenster
+        self.grip.set_visible(!on && !self.pinned.get());
+        self.stepper.set_visible(false);
+        self.reset_list(self.first.get());
+    }
+
+    /// Fragen im Gespräch, als Index ihrer Nachricht.
+    fn questions(conv: &Conv) -> Vec<usize> {
+        conv.msgs.borrow().iter().enumerate().filter(|(_, m)| m.kind == Kind::User).map(|(i, _)| i).collect()
+    }
+
+    /// Fokus: "3 von 5" und die Pfeile zum Blättern.
+    fn update_stepper(&self, conv: &Conv) {
+        let asked = Self::questions(conv);
+        let shown = asked.iter().position(|&i| i == self.first.get());
+        let on = self.focus.get() && !self.pinned.get() && asked.len() > 1 && shown.is_some() && self.revealer.reveals_child();
+        self.stepper.set_visible(on);
+        if let Some(k) = shown.filter(|_| on) {
+            self.step_label.set_text(&crate::tr!("{} von {}", "{} of {}", k + 1, asked.len()));
+            self.step_prev.set_sensitive(k > 0);
+            self.step_next.set_sensitive(k + 1 < asked.len());
+        }
+    }
+
+    /// Fokus: zur früheren oder späteren Antwort blättern.
+    fn focus_step(self: &Rc<Self>, d: i32) {
+        let Some(conv) = self.conv.borrow().clone() else { return };
+        let asked = Self::questions(&conv);
+        let Some(k) = asked.iter().position(|&i| i == self.first.get()) else { return };
+        let Some(&start) = asked.get((k as i32 + d).max(0) as usize) else { return };
+        let next = asked.iter().find(|&&i| i > start).copied();
+        self.focus_until.set(next);
+        self.reset_list(start);
+        self.expand();
+        self.sync();
+    }
+
     /// Spalte: ganzes Gespräch. Schwebend: nur Offenes, sonst die schlanke Eingabe.
     fn show_conversation(self: &Rc<Self>) {
         let Some(conv) = self.conv.borrow().clone() else { return };
@@ -2159,7 +2314,7 @@ impl ClaudePanel {
         let (w, t) = (Rc::downgrade(self), target.downgrade());
         g.connect_drag_begin(move |_, x, y| {
             let (Some(p), Some(t)) = (w.upgrade(), t.upgrade()) else { return };
-            if p.pinned.get() {
+            if p.pinned.get() || p.focus.get() {
                 return;
             }
             let (cx, cy, _, _) = p.card_rect();
@@ -2181,7 +2336,7 @@ impl ClaudePanel {
             started.set(true);
             g.set_state(gtk::EventSequenceState::Claimed);
             let (ow, oh) = (p.overlay.width() as f64, p.overlay.height().max(1) as f64);
-            let room = (ow - (ow.min(CARD_WIDTH as f64 + 32.0) - 32.0)).max(1.0);
+            let room = (ow - (ow.min(p.card_width() as f64 + 32.0) - 32.0)).max(1.0);
             p.pos.set((((cx + mx) / room).clamp(0.0, 1.0), ((cy + my) / oh).clamp(0.0, 1.0)));
             p.overlay.queue_allocate();
         });
@@ -2244,7 +2399,7 @@ impl ClaudePanel {
     /// Höchste erlaubte Antworthöhe im aktuellen Fenster.
     fn height_limit(&self) -> i32 {
         let oh = self.overlay.height().max(300);
-        let top = (self.pos.get().1 * oh as f64) as i32;
+        let top = ((if self.focus.get() { CARD_HOME } else { self.pos.get() }).1 * oh as f64) as i32;
         (oh - top - DOCK_SPACE - 150).max(240).min(oh - 170).max(MIN_ANSWER)
     }
 
@@ -2252,7 +2407,12 @@ impl ClaudePanel {
         if !self.pinned.get() {
             // Vorgabe lässt die Notiz sichtbar; gezogene Höhe wird gemerkt
             let saved = crate::settings::Settings::load().claude_height;
-            let h = if saved > 0 { saved } else { (self.overlay.height() as f64 * 0.42) as i32 };
+            let h = match (self.focus.get(), saved) {
+                // Fokus: großzügig, die Notiz bleibt darunter noch sichtbar
+                (true, _) => (self.overlay.height() as f64 * 0.62) as i32,
+                (false, s) if s > 0 => s,
+                _ => (self.overlay.height() as f64 * 0.42) as i32,
+            };
             self.scroller.set_max_content_height(h.clamp(MIN_ANSWER, self.height_limit()));
         }
         self.revealer.set_reveal_child(true);
@@ -2362,8 +2522,9 @@ impl ClaudePanel {
         Some(map)
     }
 
-    /// Beste Lage der Karte für die aktuelle Ansicht, als Abstand zu `anchor`.
-    fn solve_card_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), near: Option<(f64, f64)>) -> (f64, f64) {
+    /// Beste Lage der Karte für die aktuelle Ansicht als Abstand zu `anchor` in Pixeln, mit
+    /// ihren Kosten. Dazu die Kosten der Lage `current`, wenn eine angegeben ist.
+    fn solve_card_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), current: Option<(f64, f64)>) -> ((f64, f64), f64, f64) {
         let c = &view.canvas;
         let (w, h) = self.guide_view();
         let origin = c.compute_point(&self.overlay, &gtk::graphene::Point::new(0.0, 0.0));
@@ -2403,32 +2564,58 @@ impl ClaudePanel {
             .iter()
             .filter_map(|q| self.page_on_overlay(view, page, Rect::new(q.x, q.y, q.x, q.y)).map(|s| Pt::new(s.x0, s.y0)))
             .collect();
-        let (x, y) = best_card_spot(area, card, &marks, &links, ink, near);
-        (x - anchor.x0, y - anchor.y0)
+        let ((x, y), best) = best_card_spot(area, card, &marks, &links, &ink);
+        let now = current.map_or(f64::INFINITY, |(cx, cy)| {
+            // so, wie die Karte wirklich steht: ins Fenster geschoben
+            let (fx, fy) = fit_card((anchor.x0 + cx, anchor.y0 + cy), card, (w, h), DOCK_SPACE as f64);
+            card_cost(&Rect::new(fx, fy, fx + card.0, fy + card.1), &marks, &links, &ink)
+        });
+        ((x - anchor.x0, y - anchor.y0), best, now)
     }
 
-    /// Lage der Karte zur Stelle. Neu gerechnet wird nur, wenn sich etwas Wesentliches
-    /// ändert: Größe der Karte, Fenster, Zoom oder die Stelle wird weggescrollt.
+    /// Abstand der Karte zur Stelle in Pixeln. Beim Scrollen und Zoomen folgt die Karte ihrer
+    /// Stelle; ruht alles kurz, prüft sie ihre Lage und zieht nur um, wenn eine andere Stelle
+    /// deutlich weniger verdeckt. So deckt sie nach einer Größenänderung keinen Text ab und
+    /// springt beim Zoomen nicht.
     fn card_spot(&self, anchor: Rect) -> (f64, f64) {
-        let (card, view_size, bottom) = (self.guide_size(), self.guide_view(), DOCK_SPACE as f64);
+        let (card, view_size) = (self.guide_size(), self.guide_view());
         let Some(view) = self.tour_view.borrow().clone() else { return (0.0, 0.0) };
         let Some((page, _)) = self.guide_anchor.get() else { return (0.0, 0.0) };
-        let zoom = view.canvas.zoom();
-        let placed = self.guide_spot.get();
-        let fresh = placed.is_some_and(|s| {
-            let at = (anchor.x0 + s.offset.0, anchor.y0 + s.offset.1);
-            let fit = fit_card(at, card, view_size, bottom);
-            let on_screen = anchor.intersects(&Rect::new(0.0, 0.0, view_size.0, view_size.1));
-            let pushed = view.canvas.guide_settled() && on_screen && (at.0 - fit.0).abs().max((at.1 - fit.1).abs()) > 40.0;
-            (s.card.0 - card.0).abs() <= 16.0 && (s.card.1 - card.1).abs() <= 16.0 && s.view == view_size && (s.zoom - zoom).abs() < 1e-3 && !pushed
-        });
-        if fresh {
-            return placed.map_or((0.0, 0.0), |s| s.offset);
+        let (cx, cy, zoom) = view.canvas.camera();
+        let round = |v: f64| v.round() as i64;
+        let scene = SpotScene {
+            cam: (round(cx * zoom), round(cy * zoom)),
+            zoom: round(zoom * 1000.0),
+            view: (round(view_size.0), round(view_size.1)),
+            card: (round(card.0 / 8.0), round(card.1 / 8.0)),
+        };
+        let now = std::time::Instant::now();
+        let since = match self.spot_scene.get() {
+            Some((s, t)) if s == scene => t,
+            _ => {
+                self.spot_scene.set(Some((scene, now)));
+                if let Some(s) = self.guide_spot.get() {
+                    self.guide_spot.set(Some(CardSpot { checked: false, ..s }));
+                }
+                now
+            }
+        };
+        let settled = now.duration_since(since) >= SPOT_SETTLE && view.canvas.guide_settled();
+        match self.guide_spot.get() {
+            None => {
+                let (offset, _, _) = self.solve_card_spot(&view, page, anchor, card, None);
+                self.guide_spot.set(Some(CardSpot { offset: (offset.0 / zoom, offset.1 / zoom), checked: false }));
+                offset
+            }
+            Some(s) if settled && !s.checked => {
+                let held = (s.offset.0 * zoom, s.offset.1 * zoom);
+                let (offset, best, current) = self.solve_card_spot(&view, page, anchor, card, Some(held));
+                let offset = if worth_moving(current, best) { offset } else { held };
+                self.guide_spot.set(Some(CardSpot { offset: (offset.0 / zoom, offset.1 / zoom), checked: true }));
+                offset
+            }
+            Some(s) => (s.offset.0 * zoom, s.offset.1 * zoom),
         }
-        let near = placed.map(|s| (anchor.x0 + s.offset.0, anchor.y0 + s.offset.1));
-        let offset = self.solve_card_spot(&view, page, anchor, card, near);
-        self.guide_spot.set(Some(CardSpot { offset, card, view: view_size, zoom }));
-        offset
     }
 
     /// Ganz aus dem Fenster kann die Karte nie.
@@ -2654,6 +2841,11 @@ impl ClaudePanel {
             self.effort.set_selected(EFFORTS.iter().position(|e| e.1 == effort).unwrap_or(0) as u32);
         }
         self.model_setting.set(false);
+        let focus = match &view {
+            Some(v) => v.canvas.st().cfg.claude_focus,
+            None => crate::settings::Settings::load().claude_focus,
+        };
+        self.set_focus(focus);
         let note = view.as_ref().and_then(|v| v.canvas.st().doc_key());
         let dir = module_dir(note.as_deref(), &self.root);
         let conv = self.convs.borrow_mut().entry(dir.clone()).or_insert_with(|| Conv::load(&dir, &self.root)).clone();
@@ -2694,12 +2886,20 @@ impl ClaudePanel {
         self.streaming.replace(None);
         self.rich_rows.borrow_mut().clear();
         self.stick.set(true);
+        if self.focus.get() {
+            self.scroller.vadjustment().set_value(0.0);
+        }
     }
 
     fn show_history(self: &Rc<Self>, on: bool) {
         let Some(conv) = self.conv.borrow().clone() else { return };
         let n = conv.msgs.borrow().len();
-        if on {
+        if on && self.focus.get() {
+            let last = conv.msgs.borrow().iter().rposition(|m| m.kind == Kind::User).unwrap_or(0);
+            self.focus_until.set(None);
+            self.reset_list(last);
+            self.expand();
+        } else if on {
             self.reset_list(0);
             self.expand();
         } else if conv.pid.get().is_none() {
@@ -2820,11 +3020,21 @@ impl ClaudePanel {
         let Some(conv) = self.conv.borrow().clone() else { return };
         let running = conv.pid.get().is_some();
         let count = conv.msgs.borrow().len();
-        for i in self.rendered.get()..count {
+        let focus = self.focus.get() && !self.pinned.get();
+        let until = self.focus_until.get().filter(|_| focus).unwrap_or(count).min(count);
+        for i in self.rendered.get()..until {
+            // Fokus: eine neue Frage ersetzt die Anzeige, das Gespräch dahinter bleibt
+            let asks = conv.msgs.borrow()[i].kind == Kind::User;
+            if focus && asks && i > self.first.get() {
+                self.reset_list(i);
+            }
             self.add_row(&conv, i);
         }
-        self.rendered.set(count.max(self.first.get()));
-        if let Some((rich, button, box_)) = &*self.streaming.borrow() {
+        self.rendered.set(until.max(self.first.get()));
+        self.update_stepper(&conv);
+        self.glow.set_visible(focus && running);
+        let live = self.focus_until.get().is_none() || !focus;
+        if let Some((rich, button, box_)) = self.streaming.borrow().as_ref().filter(|_| live) {
             let last = conv.msgs.borrow().last().filter(|m| m.kind == Kind::Claude).map(|m| index::marks(&m.text));
             if let Some(m) = &last {
                 if m.clean != rich.source() {
@@ -2838,7 +3048,7 @@ impl ClaudePanel {
             button.set_visible(!running);
         }
         // Schaltfläche unter der Antwort erscheint erst am Ende: auch sie noch zeigen
-        if !running && self.stick.get() {
+        if !running && self.stick.get() && !self.focus.get() {
             let adj = self.scroller.vadjustment();
             glib::timeout_add_local_once(Duration::from_millis(80), move || adj.set_value(adj.upper() - adj.page_size()));
         }
@@ -2864,9 +3074,10 @@ impl ClaudePanel {
             Kind::User => {
                 label.set_text(&text);
                 label.add_css_class("fk-claude-user");
-                label.set_halign(gtk::Align::End);
+                label.set_halign(if self.focus.get() { gtk::Align::Start } else { gtk::Align::End });
                 self.list.append(&label);
             }
+            Kind::Tool if self.focus.get() => {}
             Kind::Tool => {
                 label.set_text(&text);
                 label.add_css_class("dim-label");
@@ -2882,13 +3093,19 @@ impl ClaudePanel {
             }
             Kind::Claude => {
                 // Formeln passen sich der Breite an, in der sie stehen
-                let room = if self.pinned.get() { self.column.size_request().0 } else { CARD_WIDTH };
+                let room = if self.pinned.get() { self.column.size_request().0 } else { self.card_width() };
                 let rich = Rich::new((room - 56) as f64);
                 let found = index::marks(&text);
                 rich.set(&found.clean, &self.engine);
                 let sources = gtk::Box::new(gtk::Orientation::Horizontal, 6);
                 self.source_buttons(conv, &found.sources, &sources);
-                let insert = gtk::Button::with_label(crate::i18n::tl("In Notiz einfügen"));
+                let insert = if self.focus.get() {
+                    let b = gtk::Button::from_icon_name("edit-paste-symbolic");
+                    b.set_tooltip_text(Some(crate::i18n::tl("In Notiz einfügen")));
+                    b
+                } else {
+                    gtk::Button::with_label(crate::i18n::tl("In Notiz einfügen"))
+                };
                 insert.add_css_class("flat");
                 insert.add_css_class("caption");
                 insert.add_css_class("fk-claude-insert");
@@ -2994,6 +3211,7 @@ impl ClaudePanel {
         if empty || conv.pid.get().is_some() {
             return;
         }
+        self.focus_until.set(None);
         conv.serial.set(conv.serial.get() + 1);
         let pad_image = if handwritten {
             let n = self.attachments.borrow().len();
@@ -4305,7 +4523,14 @@ mod tests {
     }
 
     fn spot(marks: &[Rect], ink: impl Fn(&Rect) -> f64) -> (f64, f64) {
-        best_card_spot(Rect::new(12.0, 12.0, 988.0, 716.0), (300.0, 120.0), marks, &[], ink, None)
+        best_card_spot(Rect::new(12.0, 12.0, 988.0, 716.0), (300.0, 120.0), marks, &[], ink).0
+    }
+
+    #[test]
+    fn moves_only_for_a_clear_gain() {
+        assert!(!worth_moving(3000.0, 1000.0));
+        assert!(worth_moving(30000.0, 2000.0));
+        assert!(!worth_moving(30000.0, 27000.0));
     }
 
     #[test]

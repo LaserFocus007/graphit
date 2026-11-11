@@ -213,7 +213,9 @@ impl Canvas {
                 Some(a) => {
                     let l = a.translate(o.x, o.y);
                     let cut_off = l.height() <= vis.height() && (l.y0 < vis.y0 || l.y1 > vis.y1);
-                    if !vis.expand(-40.0 / st.zoom).contains(l.center()) || cut_off {
+                    // Ganz unten bliebe der Karte nur Platz über dem Text: kleine Stellen kommen in die obere Hälfte
+                    let low = l.height() < vis.height() * 0.5 && l.center().y > vis.y0 + vis.height() * 0.65;
+                    if !vis.expand(-40.0 / st.zoom).contains(l.center()) || cut_off || low {
                         to.y = l.center().y - vis.height() * 0.4;
                     }
                     if l.x0 < vis.x0 || l.x1 > vis.x1 {
@@ -325,8 +327,10 @@ impl Canvas {
         self.st().guide.as_ref().is_none_or(|g| g.rest.is_none())
     }
 
-    pub fn zoom(&self) -> f64 {
-        self.st().zoom
+    /// Ansicht als Ursprung in Layout-Koordinaten und Zoom.
+    pub fn camera(&self) -> (f64, f64, f64) {
+        let st = self.st();
+        (st.cam.x, st.cam.y, st.zoom)
     }
 
     /// Rechteck der Zeichen im Widget, auch wenn es gerade außerhalb liegt.

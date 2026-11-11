@@ -114,6 +114,8 @@ pub struct Settings {
     pub claude_height: i32,
     /// KI-Fenster als Spalte rechts angeheftet
     pub claude_pinned: bool,
+    /// KI-Fenster im Fokus-Design: Suchleiste oben, nur die letzte Antwort
+    pub claude_focus: bool,
     /// Ort des schwebenden KI-Fensters, negativ für die Mitte
     pub claude_x: f64,
     pub claude_y: f64,
@@ -181,6 +183,7 @@ impl Default for Settings {
             claude_osk: true,
             claude_height: 0,
             claude_pinned: false,
+            claude_focus: false,
             claude_x: -1.0,
             claude_y: -1.0,
             claude_col_w: 400,
@@ -272,6 +275,7 @@ impl Settings {
                 "claude_osk" => s.claude_osk = b,
                 "claude_height" => s.claude_height = f.unwrap_or(0.0) as i32,
                 "claude_pinned" => s.claude_pinned = b,
+                "claude_focus" => s.claude_focus = b,
                 "claude_x" => s.claude_x = f.unwrap_or(-1.0),
                 "claude_y" => s.claude_y = f.unwrap_or(-1.0),
                 "claude_col_w" => s.claude_col_w = f.unwrap_or(400.0) as i32,
@@ -287,7 +291,7 @@ impl Settings {
 
     pub fn save(&self) {
         let text = format!(
-            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\nupdate_check={}\nlanguage={}\n",
+            "pressure={}\npressure_curve={}\nsmoothing={}\nink_style={}\nprediction_ms={}\ncursor={}\nhold_to_straighten={}\nhold_delay_ms={}\npalm={}\nkinetic={}\nauto_shapes={}\nradial_longpress={}\nradial_delay_ms={}\nbutton1={}\nbutton2={}\neraser_end={}\ntap_radial={}\ntap_select={}\ntap_ms={}\ntap_mm={}\ntap_successive_ms={}\nshape_min_mm={}\nappend_page={}\neraser_whole={}\ndark_paper={}\npaper_style={}\nkinetic_glide={}\nkinetic_boost={}\nkinetic_axis_lock={}\ntouch_predict_ms={}\npressure_lo={}\npressure_hi={}\ntilt_shading={}\nclaude_model={}\nclaude_effort={}\nclaude_osk={}\nclaude_height={}\nclaude_pinned={}\nclaude_focus={}\nclaude_x={}\nclaude_y={}\nclaude_col_w={}\nclaude_exams={}\nexam_root={}\nupdate_check={}\nlanguage={}\n",
             self.pressure,
             self.pressure_curve,
             self.smoothing,
@@ -334,6 +338,7 @@ impl Settings {
             self.claude_osk,
             self.claude_height,
             self.claude_pinned,
+            self.claude_focus,
             self.claude_x,
             self.claude_y,
             self.claude_col_w,

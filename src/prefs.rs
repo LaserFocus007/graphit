@@ -413,6 +413,14 @@ pub fn show(parent: &impl IsA<gtk::Widget>, canvas: &Canvas) {
         .description(crate::i18n::tl("Esc öffnet den Dialog. Pro Modul läuft ein eigenes Gespräch."))
         .build();
     let cc = c.clone();
+    claude.add(&combo(
+        crate::i18n::tl("Fensterdesign"),
+        crate::i18n::tl("Fokus: Suchleiste oben, darunter nur die Antwort auf die letzte Frage"),
+        &[crate::i18n::tl("Klassisch"), crate::i18n::tl("Fokus")],
+        cfg.claude_focus as usize,
+        move |i| update(&cc, |s| s.claude_focus = i == 1),
+    ));
+    let cc = c.clone();
     let names: Vec<&str> = crate::claude::MODELS.iter().map(|m| m.0).collect();
     claude.add(&combo(
         crate::i18n::tl("Standardmodell"),

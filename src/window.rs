@@ -109,6 +109,29 @@ button.fk-claude-insert:hover { background-color: alpha(white, .08); color: #f1f
 .fk-claude-seg-on { background-color: #f1f0ed; }
 button.fk-claude-next { background-color: #f1f0ed; color: #18181b; border-radius: 11px; padding: 4px 16px; }
 button.fk-claude-next:hover { background-color: white; }
+/* KI-Fenster im Fokus-Design: schlanke Suchkapsel, darunter eine eigene, ruhige Karte */
+.fk-claude.fk-focus { background: none; box-shadow: none; border-radius: 0; }
+.fk-focus .fk-claude-bar { background-color: #1c1c20; border-radius: 22px; padding: 3px 5px 3px 14px; min-height: 36px;
+  box-shadow: 0 14px 40px alpha(black, .38), 0 2px 6px alpha(black, .22), inset 0 0 0 1px alpha(white, .09); }
+.fk-focus .fk-claude-bar entry { font-size: 1.04em; min-height: 30px; }
+.fk-focus button.fk-claude-send { min-width: 30px; min-height: 30px; }
+.fk-claude-sheet { background-color: #1c1c20; border-radius: 16px; margin-top: 6px;
+  box-shadow: 0 16px 44px alpha(black, .36), 0 2px 8px alpha(black, .2), inset 0 0 0 1px alpha(white, .07); }
+.fk-focus .fk-claude-body { border-top: none; }
+.fk-focus list.fk-claude-quick { border-top: none; padding: 4px; }
+.fk-focus list.fk-claude-quick row { padding: 6px 10px; }
+.fk-focus .fk-claude-list { padding: 6px 26px 10px; }
+.fk-focus .fk-claude-user { background: none; padding: 10px 0 2px; color: #7d7b77; font-size: .84em; }
+.fk-focus .fk-claude-rich, .fk-focus .fk-claude-rich text { font-family: "Noto Serif", "DejaVu Serif", serif; font-size: 1.08em; color: #ecebe7; }
+.fk-focus button.fk-claude-insert { min-height: 26px; min-width: 26px; padding: 0 6px; margin-left: -6px; color: #8d8b86; }
+.fk-focus .fk-claude-status { padding: 0 18px 6px; }
+.fk-focus .fk-claude-foot { border-top: 1px solid alpha(white, .06); padding: 2px 6px 3px 8px; }
+.fk-focus .fk-claude-foot button { min-width: 28px; min-height: 28px; }
+.fk-focus .fk-claude-model button { min-height: 26px; font-size: .82em; padding: 0 7px; }
+.fk-focus .fk-claude-foot button.fk-claude-context { font-size: .82em; }
+.fk-claude-stepper { color: #8d8b86; margin-right: 4px; }
+.fk-claude-step-label { font-size: .82em; color: #8d8b86; margin: 0 1px; }
+.fk-claude-glow { min-height: 2px; margin: 0 22px; border-radius: 2px; background-color: #d97757; animation: fk-claude-breathe 1.2s ease-in-out infinite; }
 .fk-claude-grip { min-height: 13px; padding-top: 5px; }
 .fk-claude-chips { padding: 0 14px 8px; }
 button.fk-claude-hint { background: none; box-shadow: inset 0 0 0 1px alpha(white, .15); color: #d8d6d1; border-radius: 11px; padding: 5px 11px; font-size: .92em; }
