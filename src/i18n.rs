@@ -238,6 +238,7 @@ static EN: &[(&str, &str)] = &[
     ("Nach neuen Versionen suchen", "Check for new versions"),
     ("Natürliche Stimmen", "Natural voices"),
     ("Fensterdesign", "Window design"),
+    ("Was trifft zu?", "Which is right?"),
     ("Fokus: Suchleiste oben, darunter nur die Antwort auf die letzte Frage", "Focus: a search bar at the top with only the answer to your last question"),
     ("Klassisch", "Classic"),
     ("Fokus", "Focus"),

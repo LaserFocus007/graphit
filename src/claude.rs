@@ -182,7 +182,7 @@ Eine Führung ist die Datei CACHE/fuehrung.json, die du vor dem Ende deiner Antw
   "verbinde":[[0,1]],        // Linie von marken[0] zu marken[1]: zeigt Zusammenhänge
   "skizze":[[[0.2,0.5],[0.4,0.5],[0.4,0.3]]],  // Linienzüge, zeichnen sich sichtbar
   "tipp":"Hilfe, die erst auf Knopfdruck erscheint",
-  "quiz":{"optionen":["A","B","C"],"richtig":1,"erklaerung":"Warum B stimmt"},
+  "quiz":{"frage":"Was passiert, wenn …?","optionen":["A","B","C"],"richtig":1,"erklaerung":"Warum B stimmt"},
   "aufgabe":"Was der Nutzer selbst auf der Seite rechnen soll",
   "terme":[{"suche":"EA","bereich":[0.2,0.3,0.28,0.36],"name":"$\\frac{EA}{L}$","erklaerung":"Steifigkeit des Stabs"}],
   "diagramm":{"titel":"Spannung","x":{"name":"Dehnung","min":0,"max":0.01},"y":{"name":"σ in MPa"},
@@ -195,7 +195,7 @@ Alles außer text ist freiwillig. Die Datei darf auch nur vorschlaege enthalten.
 - zeichen: kreis, markierung, unterstreichen, pfeil, rahmen, fokus (dunkelt alles andere ab, für den einen Punkt, auf den es ankommt).
 - suche trifft exakt und ist immer vorzuziehen; hole den Wortlaut bei PDFs mit pdftotext. bereich nur für Handschrift: [x0,y0,x1,y1] als Anteile der Seite von 0 bis 1; CACHE/striche.json nennt die Schreibzeilen je Seite, daran rastet Graphit ein.
 - skizze in Seitenanteilen, für Freikörperbilder, Diagramme, Kurvenverläufe, fehlende Hilfslinien. Der Nutzer kann sie übernehmen.
-- quiz nach einem Kerngedanken, damit der Nutzer aktiv nachdenkt, statt nur zu lesen. Falsche Optionen sind typische Denkfehler.
+- quiz nach einem Kerngedanken, damit der Nutzer aktiv nachdenkt, statt nur zu lesen. frage ist die eigentliche Frage und steht fett über den Optionen, text gibt nur den Zusammenhang. Falsche Optionen sind typische Denkfehler.
 - aufgabe, wenn Selbermachen mehr bringt als Zuschauen. Der Nutzer rechnet auf der Seite und tippt auf Prüfen; dann bekommst du die aktuelle Seite und gibst Rückmeldung, bei Fehlern mit Führung genau auf seine Stelle.
 - tipp statt der Lösung, wenn der Nutzer selbst darauf kommen kann.
 - terme schlüsseln eine Formel auf der Seite auf: Jeder Term bekommt einen farbigen Rahmen und einen Knopf auf der Karte, der seine erklaerung zeigt. Schätze die Lage nie nach Augenmaß, das liegt oft eine halbe Seite daneben. Hole sie aus CACHE/geometrie-<Seite>.json (aktuelle Seite) oder mit pdftotext -bbox -f N -l N; Formeln stehen dort als Zeichenfolgen wie ϵmach, hp oder EA. Gib als suche die Zeichenfolge des Terms genau so an und dazu als bereich ein Rechteck um genau diese Wörter (Seitenanteile, etwas Rand). Graphit rastet am Inhalt ein. Eine Herleitung läuft über mehrere Schritte, je Schritt eine Zeile und ihre terme.
@@ -541,6 +541,8 @@ const TERM_COLORS: [(f32, f32, f32); 6] = [(0.85, 0.17, 0.23), (0.12, 0.37, 0.82
 
 #[derive(Clone, Debug, PartialEq)]
 struct Quiz {
+    /// die eigentliche Frage; ohne sie gilt der Text des Schritts als Frage
+    question: Option<String>,
     options: Vec<String>,
     right: usize,
     why: Option<String>,
@@ -673,6 +675,7 @@ pub fn parse_tour(json: &str) -> (Vec<Step>, Vec<String>) {
             let pair = |v: &Value| Some((v[0].as_u64()? as usize, v[1].as_u64()? as usize));
             let line = |l: &Value| l.as_array().map(|p| p.iter().filter_map(|q| Some([q[0].as_f64()?, q[1].as_f64()?])).collect::<Vec<_>>());
             let quiz = s["quiz"]["optionen"].as_array().filter(|o| o.len() >= 2).map(|o| Quiz {
+                question: non_empty(&s["quiz"]["frage"]),
                 options: o.iter().filter_map(non_empty).collect(),
                 right: s["quiz"]["richtig"].as_u64().unwrap_or(0) as usize,
                 why: non_empty(&s["quiz"]["erklaerung"]),
@@ -3771,7 +3774,13 @@ impl ClaudePanel {
         if let Some(s) = self.tour.borrow().get(self.tour_idx.get()) {
             match s.think.as_ref().filter(|_| !self.guide_revealed.get()) {
                 Some(t) => self.speaker.say(&t.question),
-                None => self.speaker.say(&index::marks(&s.text).clean),
+                None => {
+                    let text = index::marks(&s.text).clean;
+                    match s.quiz.as_ref().and_then(|q| q.question.as_ref()) {
+                        Some(q) => self.speaker.say(&format!("{text}\n\n{q}")),
+                        None => self.speaker.say(&text),
+                    }
+                }
             }
         }
     }
@@ -3886,12 +3895,19 @@ impl ClaudePanel {
     }
 
     fn ask_button(self: &Rc<Self>, caption: &str, question: &str) -> gtk::Button {
-        let label = gtk::Label::new(Some(caption));
-        label.set_wrap(true);
-        label.set_wrap_mode(pango::WrapMode::WordChar);
-        label.set_xalign(0.0);
         let b = gtk::Button::new();
-        b.set_child(Some(&label));
+        if caption.contains('$') {
+            // Formeln gesetzt wie im übrigen Text; Klicks gehen an den Knopf
+            let text = self.extra_text(caption);
+            text.root.set_can_target(false);
+            b.set_child(Some(&text.root));
+        } else {
+            let label = gtk::Label::new(Some(caption));
+            label.set_wrap(true);
+            label.set_wrap_mode(pango::WrapMode::WordChar);
+            label.set_xalign(0.0);
+            b.set_child(Some(&label));
+        }
         b.add_css_class("fk-claude-hint");
         let (w, text) = (Rc::downgrade(self), question.to_string());
         b.connect_clicked(move |_| {
@@ -4370,7 +4386,13 @@ impl ClaudePanel {
             self.add_plot(d, view);
         }
         if let Some(q) = &step.quiz {
-            self.add_quiz(q, &index::marks(&step.text).clean);
+            let text = index::marks(&step.text).clean;
+            // ohne eigene Frage ist der Text des Schritts die Frage, wenn er wie eine klingt
+            let asked = q.question.clone().or_else(|| (!text.trim_end().ends_with('?')).then(|| crate::i18n::tl("Was trifft zu?").to_string()));
+            if let Some(a) = &asked {
+                self.guide_extra.append(&self.extra_text(&format!("**{a}**")).root);
+            }
+            self.add_quiz(q, asked.as_deref().unwrap_or(&text));
         }
         if let Some(tip) = &step.tip {
             let shown = self.extra_text(tip);
@@ -4720,7 +4742,7 @@ mod tests {
             {"text":"Hier","ziel":"viewer1","seite":3,"zeichen":"markierung","suche":"Amagat"},
             {"text":"Da","seite":1,"marken":[{"bereich":[0.1,0.2,0.5,0.3],"text":"Schild"},{"zeichen":"fokus","suche":"x"}],"verbinde":[[0,1]],
              "skizze":[[[0.1,0.1],[0.2,0.2]],[[0.5,0.5]]],"tipp":"Denk an c_p","aufgabe":"Rechne aus"},
-            {"text":"Quiz","quiz":{"optionen":["a","b"],"richtig":1,"erklaerung":"weil"}},
+            {"text":"Quiz","quiz":{"frage":"Welche?","optionen":["a","b"],"richtig":1,"erklaerung":"weil"}},
             {"text":"","suche":"fällt weg"}],"vorschlaege":["Noch ein Beispiel"]}"#);
         assert_eq!(t.len(), 3);
         assert_eq!(hints, ["Noch ein Beispiel"]);
@@ -4733,6 +4755,7 @@ mod tests {
         assert_eq!((t[1].tip.as_deref(), t[1].task.as_deref()), (Some("Denk an c_p"), Some("Rechne aus")));
         let q = t[2].quiz.as_ref().unwrap();
         assert_eq!((q.options.len(), q.right, q.why.as_deref()), (2, 1, Some("weil")));
+        assert_eq!(q.question.as_deref(), Some("Welche?"));
         assert!(parse_tour("kaputt").0.is_empty());
         assert_eq!(parse_tour(r#"{"vorschlaege":["x"]}"#).1, ["x"]);
     }
