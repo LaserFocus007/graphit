@@ -744,7 +744,7 @@ impl State {
 
         // 1) sichtbare Kacheln prüfen
         let (tx0, ty0, tx1, ty1) = range(vis);
-        let mut missing = false;
+        let mut gaps = Vec::new();
         let mut present = Vec::new();
         let center = vis.center();
         for ty in ty0..=ty1 {
@@ -765,12 +765,12 @@ impl State {
                         } else if recent {
                             present.push(key);
                         } else {
-                            missing = true;
+                            gaps.push(key);
                         }
                         ok
                     }
                     None => {
-                        missing = true;
+                        gaps.push(key);
                         false
                     }
                 };
@@ -802,20 +802,67 @@ impl State {
             }
         }
 
-        // 3) Ersatz aus anderen Zoomstufen, solange etwas fehlt; nur Kacheln, die noch stimmen
-        if missing {
-            let mut fb: Vec<(u32, Key)> = self
+        // 3) Lücken aus einer anderen Zoomstufe füllen, bis die neuen Kacheln fertig sind. Je Lücke
+        //    genau eine Stufe und auf die Lücke beschnitten: übereinander gelegte Stufen ließen
+        //    durchsichtige Tinte mehrfach durchscheinen, die Schrift wirkte kurz dicker und blasser.
+        if !gaps.is_empty() {
+            let mut levels: Vec<u32> = self
                 .cache
                 .tiles
-                .iter()
-                .filter(|(k, tile)| k.page == pg.id && k.kind == kind && k.level != level && current(k, tile.ver))
-                .map(|(k, _)| k)
-                .filter(|k| k.page_rect().translate(origin.x, origin.y).intersects(vis))
-                .map(|k| ((k.level as i64 - level as i64).unsigned_abs() as u32, *k))
+                .keys()
+                .filter(|k| k.page == pg.id && k.kind == kind && k.level != level)
+                .map(|k| k.level)
                 .collect();
-            fb.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-            for (_, k) in fb {
-                self.append_tile(snap, &k, origin);
+            levels.sort_unstable();
+            levels.dedup();
+            // nächstgelegene Stufe zuerst, bei Gleichstand die schärfere
+            levels.sort_by_key(|&l| ((l as i64 - level as i64).unsigned_abs(), std::cmp::Reverse(l)));
+            let mut fills: Vec<(Rect, Vec<Key>)> = Vec::new();
+            for gap in &gaps {
+                let r = gap.page_rect();
+                let cell = Rect::new(r.x0.max(0.0), r.y0.max(0.0), r.x1.min(pg.width), r.y1.min(pg.height));
+                let mut best: Option<Vec<Key>> = None;
+                for &l in &levels {
+                    let lt = TILE as f64 / tiles::scale_of(l);
+                    let (nx, ny) = ((pg.width / lt).ceil() as i32 - 1, (pg.height / lt).ceil() as i32 - 1);
+                    let (x0, y0) = (((cell.x0 / lt).floor() as i32).max(0), ((cell.y0 / lt).floor() as i32).max(0));
+                    let (x1, y1) = ((((cell.x1 - 1e-6) / lt).floor() as i32).min(nx), (((cell.y1 - 1e-6) / lt).floor() as i32).min(ny));
+                    let (mut want, mut have) = (0, Vec::new());
+                    for ty in y0..=y1 {
+                        for tx in x0..=x1 {
+                            want += 1;
+                            let k = Key { page: pg.id, kind, level: l, tx, ty };
+                            if self.cache.tiles.get(&k).is_some_and(|tile| current(&k, tile.ver)) {
+                                have.push(k);
+                            }
+                        }
+                    }
+                    if have.len() == want {
+                        best = Some(have);
+                        break;
+                    }
+                    if best.is_none() && !have.is_empty() {
+                        best = Some(have);
+                    }
+                }
+                if let Some(keys) = best {
+                    fills.push((cell, keys));
+                }
+            }
+            let dev = self.zoom * self.sf;
+            let ox = (origin.x - self.cam.x) * dev;
+            let oy = (origin.y - self.cam.y) * dev;
+            for (cell, keys) in fills {
+                // gleiche Rundung wie die Kachel selbst, damit keine Fugen entstehen
+                let x0 = (ox + cell.x0 * dev).round() / self.sf;
+                let y0 = (oy + cell.y0 * dev).round() / self.sf;
+                let x1 = (ox + cell.x1 * dev).round() / self.sf;
+                let y1 = (oy + cell.y1 * dev).round() / self.sf;
+                snap.push_clip(&graphene::Rect::new(x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32));
+                for k in keys {
+                    self.append_tile(snap, &k, origin);
+                }
+                snap.pop();
             }
         }
         for k in present {
