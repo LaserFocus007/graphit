@@ -952,7 +952,7 @@ impl Win {
     // ---------------------------------------------------------------- Dock
 
     fn build_dock(self: &Rc<Self>) {
-        let tools = [Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Select, Tool::Shape, Tool::Text, Tool::Space, Tool::Ask];
+        let tools = [Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Select, Tool::Shape, Tool::Text, Tool::Space, Tool::Laser, Tool::Ask];
         let mut group: Option<gtk::ToggleButton> = None;
         for t in tools {
             let b = gtk::ToggleButton::new();

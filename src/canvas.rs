@@ -21,6 +21,7 @@ use crate::tools::*;
 
 mod edit;
 mod guide;
+mod laser;
 mod pages;
 mod place;
 mod search;
@@ -75,6 +76,8 @@ struct Live {
     still_since: Instant,
     still_at: Pt,
     straight: bool,
+    /// Freihandlinie vor dem Begradigen: eigener Rückgängig-Schritt, damit Rückgängig nur das Begradigen zurücknimmt
+    freehand: Option<Stroke>,
     /// begradigte/erkannte Form folgt dem Stift nicht mehr
     frozen: bool,
     started: Instant,
@@ -437,6 +440,8 @@ pub struct State {
     last_pen: Option<Instant>,
     barrel: u32,
     hover: Option<(f64, f64)>,
+    /// Leuchtspur des Laserpointers
+    laser: laser::Laser,
     needs_fit: bool,
     /// Seitenbreite halten, bis der Nutzer selbst zoomt
     auto_fit: bool,
@@ -482,6 +487,7 @@ impl State {
             last_pen: None,
             barrel: 0,
             hover: None,
+            laser: laser::Laser::default(),
             before_ask: None,
             needs_fit: true,
             auto_fit: true,
@@ -728,6 +734,8 @@ impl State {
         let want_ver = if kind == Kind::Pdf { pg.bg_ver } else { pg.ink_ver };
         let frame = self.cache.frame;
         let mut data: Option<Arc<PageData>> = None;
+        // Kachel noch aktuell? Inhalt prüft die geänderten Bereiche, PDF und Vorschau die Version
+        let current = |key: &Key, ver: u64| if kind != Kind::Pdf && kind != Kind::Thumb { pg.tile_valid(ver, &key.page_rect()) } else { ver >= want_ver };
         let make_job = |key: Key, data: &mut Option<Arc<PageData>>| Job {
             key,
             ver: want_ver,
@@ -744,12 +752,21 @@ impl State {
                 let key = Key { page: pg.id, kind, level, tx, ty };
                 let valid = match self.cache.tiles.get_mut(&key) {
                     Some(tile) => {
+                        // eben noch zu sehen: dann ist die Kachel erst durch eine laufende Änderung
+                        // veraltet und bleibt stehen, bis die neue fertig ist (der frische Strich
+                        // liegt so lange darüber). Veraltete Kacheln, die erst durch Scrollen oder
+                        // Zoomen ins Bild kommen, zeigen Gelöschtes: die nie zeigen.
+                        let recent = tile.shown + 2 >= frame;
                         tile.used = frame;
-                        let ok = if kind != Kind::Pdf && kind != Kind::Thumb { pg.tile_valid(tile.ver, &key.page_rect()) } else { tile.ver >= want_ver };
+                        let ok = current(&key, tile.ver);
                         if ok {
                             tile.ver = tile.ver.max(want_ver);
+                            present.push(key);
+                        } else if recent {
+                            present.push(key);
+                        } else {
+                            missing = true;
                         }
-                        present.push(key);
                         ok
                     }
                     None => {
@@ -774,7 +791,7 @@ impl State {
                 let ok = match self.cache.tiles.get_mut(&key) {
                     Some(tile) => {
                         tile.used = frame;
-                        if kind != Kind::Pdf && kind != Kind::Thumb { pg.tile_valid(tile.ver, &key.page_rect()) } else { tile.ver >= want_ver }
+                        current(&key, tile.ver)
                     }
                     None => false,
                 };
@@ -785,13 +802,14 @@ impl State {
             }
         }
 
-        // 3) Ersatz aus anderen Zoomstufen, solange etwas fehlt
+        // 3) Ersatz aus anderen Zoomstufen, solange etwas fehlt; nur Kacheln, die noch stimmen
         if missing {
             let mut fb: Vec<(u32, Key)> = self
                 .cache
                 .tiles
-                .keys()
-                .filter(|k| k.page == pg.id && k.kind == kind && k.level != level)
+                .iter()
+                .filter(|(k, tile)| k.page == pg.id && k.kind == kind && k.level != level && current(k, tile.ver))
+                .map(|(k, _)| k)
                 .filter(|k| k.page_rect().translate(origin.x, origin.y).intersects(vis))
                 .map(|k| ((k.level as i64 - level as i64).unsigned_abs() as u32, *k))
                 .collect();
@@ -801,6 +819,9 @@ impl State {
             }
         }
         for k in present {
+            if let Some(tile) = self.cache.tiles.get_mut(&k) {
+                tile.shown = frame;
+            }
             self.append_tile(snap, &k, origin);
         }
     }
@@ -1564,6 +1585,7 @@ impl Canvas {
             if st.mouse_pointer {
                 let name = match st.tools.tool {
                     Tool::Hand => "grab",
+                    Tool::Laser => "none",
                     Tool::Text => "text",
                     _ => "default",
                 };
@@ -1582,7 +1604,7 @@ impl Canvas {
                     }
                     Tool::Hand => ("grab".into(), None),
                     Tool::Text => ("text".into(), None),
-                    Tool::Eraser => ("none".into(), None),
+                    Tool::Eraser | Tool::Laser => ("none".into(), None),
                     _ => ("default".into(), None),
                 }
             }
@@ -1708,6 +1730,7 @@ impl Canvas {
         }
 
         self.draw_overlays(&mut st, snap, dark_ui);
+        self.draw_laser(&st, snap);
 
         // Radierer-Cursor
         let image_erase = matches!(st.action, Some(Action::ImageErase { .. }));
@@ -1787,8 +1810,14 @@ impl Canvas {
 
         let motion = gtk::EventControllerMotion::new();
         let weak = self.downgrade();
-        motion.connect_motion(move |_, x, y| {
+        motion.connect_motion(move |ctl, x, y| {
             if let Some(c) = weak.upgrade() {
+                // Laserpointer: aufliegend verlängert die Spur, schwebend folgt nur der Leuchtpunkt
+                if ctl.current_event_state().contains(gdk::ModifierType::BUTTON1_MASK) {
+                    c.laser_draw(x, y);
+                } else {
+                    c.laser_hover(x, y);
+                }
                 let redraw = {
                     let mut st = c.st();
                     st.hover = Some((x, y));
@@ -2201,6 +2230,7 @@ impl Canvas {
                 return glib::Propagation::Proceed;
             }
             E::ProximityOut => {
+                self.laser_away();
                 let mut st = self.st();
                 st.pen_near = false;
                 st.last_pen = Some(Instant::now());

@@ -189,6 +189,8 @@ pub struct Tile {
     pub w: i32,
     pub h: i32,
     pub used: u64,
+    /// zuletzt tatsächlich auf dem Bildschirm gezeichnet (Bildnummer)
+    pub shown: u64,
 }
 
 pub struct Cache {
@@ -213,7 +215,7 @@ impl Cache {
         let bytes = glib::Bytes::from_owned(d.pixels);
         let tex = gdk::MemoryTexture::new(d.w, d.h, gdk::MemoryFormat::B8g8r8a8Premultiplied, &bytes, d.stride);
         let size = (d.w * d.h * 4) as usize;
-        if let Some(old) = self.tiles.insert(d.key, Tile { tex, ver: d.ver, w: d.w, h: d.h, used: self.frame }) {
+        if let Some(old) = self.tiles.insert(d.key, Tile { tex, ver: d.ver, w: d.w, h: d.h, used: self.frame, shown: 0 }) {
             self.bytes -= (old.w * old.h * 4) as usize;
         }
         self.bytes += size;

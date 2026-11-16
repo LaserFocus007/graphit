@@ -25,7 +25,7 @@ Graphit opens your existing Xournal++ notebooks and PDFs, keeps up with the pen 
 
 **Writing**
 - Low-latency ink with stroke prediction, pressure curves, pressure calibration and optional pencil-style tilt shading
-- Hold the pen still to straighten a line, or let rough sketches snap into clean lines, circles, rectangles and triangles
+- Hold the pen still to straighten a line, or let rough sketches snap into clean lines, circles, rectangles and triangles. One undo brings back your freehand stroke
 - Shape tool with lines, arrows, rectangles and ellipses
 - Highlighter that snaps to the text lines of a PDF
 - Lasso selection, text boxes, images, an insert-space tool and an eyedropper
@@ -34,6 +34,7 @@ Graphit opens your existing Xournal++ notebooks and PDFs, keeps up with the pen 
 - Palm rejection: rest your hand on the screen while fingers pan and zoom, with smooth kinetic scrolling
 - Radial menu right at the pen tip for tools, colors, undo and paste
 - Configurable pen buttons and eraser end
+- Laser pointer with a glowing trail for presenting, gone as soon as the pen leaves the screen
 
 **Screenshots that fit the page**
 - Pasted screenshots lose their white or black background, so the paper and your notes show through

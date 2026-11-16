@@ -105,8 +105,9 @@ const R_CENTER: f64 = 30.0;
 const R_COLORS: f64 = 78.0;
 const R_TOOLS: f64 = 132.0;
 /// Äußerer Ring im Uhrzeigersinn ab oben: Rückgängig links, Wiederholen rechts.
-const RADIAL_RING: [RadialItem; 10] = [
+const RADIAL_RING: [RadialItem; 11] = [
     RadialItem::Tool(Tool::Ask),
+    RadialItem::Tool(Tool::Laser),
     RadialItem::Tool(Tool::Pen),
     RadialItem::Tool(Tool::Highlighter),
     RadialItem::Redo,
@@ -270,6 +271,11 @@ impl Canvas {
             self.changed();
             return;
         }
+        // Laserpointer: nur Spur, nichts in die Notiz
+        if tool == Tool::Laser {
+            self.laser_down(s.x, s.y);
+            return;
+        }
         if self.st().readonly && tool != Tool::Hand {
             self.st().action = Some(Action::Pan { last: (s.x, s.y) });
             return;
@@ -363,6 +369,7 @@ impl Canvas {
                     still_since: Instant::now(),
                     still_at: p,
                     straight: false,
+                    freehand: None,
                     frozen: false,
                     started: Instant::now(),
                     start_screen: (s.x, s.y),
@@ -403,6 +410,8 @@ impl Canvas {
                 st.action = Some(Action::Shape { page: st.doc.pages[i].clone(), origin: st.page_origin(i), kind, a: p, b: p });
                 Post::None
             }
+            // oben schon abgefangen: der Laser zeichnet nie in die Notiz
+            Tool::Laser => Post::None,
             Tool::Space => {
                 let Some((i, p)) = st.page_at(s.x, s.y, 0.0) else { return };
                 // Nach oben ziehen entfernt Platz, aber nur bis zum Inhalt darüber
@@ -600,6 +609,12 @@ impl Canvas {
 
     pub(super) fn motion(&self, samples: &[Sample]) {
         let Some(last) = samples.last() else { return };
+        if self.st().tools.tool == Tool::Laser && self.st().action.is_none() {
+            for s in samples {
+                self.laser_draw(s.x, s.y);
+            }
+            return;
+        }
         let mut st = self.st();
         st.hover = Some((last.x, last.y));
         let zoom = st.zoom;
@@ -957,6 +972,7 @@ impl Canvas {
             let big = Rect::bounding(&live.pts).map(|b| b.width().max(b.height()) >= min).unwrap_or(false);
             if self.st().cfg.auto_shapes && live.tool == StrokeTool::Pen && big {
                 if let Some(shape) = shapes::recognize(&live.pts, false) {
+                    live.freehand = Some(live.stroke_of(&live.pts, &live.ws, false));
                     let w = live.ws.iter().sum::<f64>() / live.ws.len() as f64;
                     live.ws = vec![w; shape.len()];
                     live.pts = shape;
@@ -972,6 +988,13 @@ impl Canvas {
         let layer = page.borrow().current_layer();
         let mut items: Vec<ItemRef> = (*page.borrow().layers[layer].items).clone();
         let rect = stroke.bbox.translate(live.origin.x, live.origin.y);
+        // begradigt: erst die Freihandlinie als eigener Schritt, dann die Form. Rückgängig nimmt
+        // so zuerst nur das Begradigen zurück, ein zweites Mal den ganzen Strich.
+        if let Some(raw) = live.freehand.take() {
+            let mut first = items.clone();
+            first.push(Arc::new(Item::Stroke(raw)));
+            st.push_items_change(&page, layer, Arc::new(first));
+        }
         items.push(Arc::new(Item::Stroke(stroke)));
         st.push_items_change(&page, layer, Arc::new(items));
         let ver = page.borrow().ink_ver;
@@ -1087,6 +1110,7 @@ impl Canvas {
                 return glib::ControlFlow::Continue;
             }
             // Halten: Form erkennen, sonst gerade Linie, die dem Stift weiter folgt
+            live.freehand = Some(live.stroke_of(&live.pts, &live.ws, false));
             let w = live.ws.iter().sum::<f64>() / live.ws.len() as f64;
             match shapes::recognize(&live.pts, false).filter(|s| s.len() > 2) {
                 Some(shape) => {

@@ -14,6 +14,8 @@ pub enum Tool {
     Space,
     /// Stelle einkreisen und Claude dazu fragen
     Ask,
+    /// Leuchtspur zum Zeigen, landet nicht in der Notiz
+    Laser,
 }
 
 impl Tool {
@@ -28,6 +30,7 @@ impl Tool {
             Tool::Hand => "Hand",
             Tool::Space => crate::i18n::tl("Platz einfügen"),
             Tool::Ask => crate::i18n::tl("Einkreisen und Claude fragen"),
+            Tool::Laser => crate::i18n::tl("Laserpointer"),
         }
     }
     pub fn icon(&self) -> &'static str {
@@ -41,6 +44,7 @@ impl Tool {
             Tool::Hand => "fk-hand-symbolic",
             Tool::Space => "fk-space-symbolic",
             Tool::Ask => "fk-ask-symbolic",
+            Tool::Laser => "fk-laser-symbolic",
         }
     }
     /// Werkzeuge, die mit Farbe/Breite arbeiten.
