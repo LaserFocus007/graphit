@@ -794,6 +794,11 @@ fn fit_card(at: (f64, f64), card: (f64, f64), view: (f64, f64), bottom: f64) -> 
 const CARD_PAD: f64 = 12.0;
 /// So viel Luft bleibt um jedes Zeichen.
 const CARD_CLEARANCE: f64 = 10.0;
+/// So viel Luft lässt die Karte zu Text und Formeln, in Pixeln.
+const CARD_AIR: f64 = 16.0;
+/// Verdeckter Inhalt wiegt viel schwerer als ein weiterer Weg zur Stelle: lieber etwas
+/// weiter weg als über dem Text.
+const INK_WEIGHT: f64 = 8.0;
 /// Platz des Schilds über einem beschrifteten Zeichen.
 const LABEL_SPACE: f64 = 38.0;
 
@@ -810,7 +815,7 @@ fn overlap(a: &Rect, b: &Rect) -> f64 {
     if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
 }
 
-/// Was die Karte an einer Stelle kostet, in px²: verdeckter Inhalt zählt voll, Entfernung
+/// Was die Karte an einer Stelle kostet, in px²: verdeckter Inhalt zählt vielfach, Entfernung
 /// zu den Zeichen leicht und mit Abstand immer stärker. Zeichen selbst bleiben frei, solange
 /// das irgendwie geht.
 fn card_cost(r: &Rect, marks: &[Rect], links: &[Pt], ink: &impl Fn(&Rect) -> f64) -> f64 {
@@ -818,7 +823,7 @@ fn card_cost(r: &Rect, marks: &[Rect], links: &[Pt], ink: &impl Fn(&Rect) -> f64
     let dist = marks.iter().map(|m| rect_gap(r, m)).fold(f64::INFINITY, f64::min);
     let dist = if dist.is_finite() { dist } else { 0.0 };
     let crossed = links.iter().filter(|p| r.contains(**p)).count() as f64;
-    (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + ink(r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed
+    (if blocked > 0.0 { 1e7 + blocked } else { 0.0 }) + INK_WEIGHT * ink(r) + 15.0 * dist + 0.05 * dist * dist + 1500.0 * crossed
 }
 
 /// Die günstigste Stelle in `area` und ihre Kosten.
@@ -868,8 +873,10 @@ struct SpotScene {
 }
 
 /// Breite der Lernkarte und wie schmal sie werden darf, um in einen freien Rand zu passen.
-const GUIDE_WIDTH: i32 = 350;
-const GUIDE_NARROWEST: i32 = 260;
+const GUIDE_WIDTH: i32 = 480;
+const GUIDE_NARROWEST: i32 = 360;
+/// Breiteste Formel in der Lernkarte, passt auch in die schmalste Karte.
+const GUIDE_TEXT: f64 = 330.0;
 
 /// So lange muss Tab gehalten werden, bis das KI-Fenster durchsichtig wird.
 const PEEK_DELAY: Duration = Duration::from_millis(120);
@@ -1308,7 +1315,7 @@ impl ClaudePanel {
         head.append(&guide_speak);
         head.append(&close);
         let guide_steps = gtk::Box::new(gtk::Orientation::Horizontal, 3);
-        let guide_text = Rich::new(330.0);
+        let guide_text = Rich::new(GUIDE_TEXT);
         let guide_prev = gtk::Button::from_icon_name("go-previous-symbolic");
         round(&guide_prev, crate::i18n::tl("Zurück"));
         let ask = gtk::Button::with_label(crate::i18n::tl("Nachfragen"));
@@ -2678,7 +2685,7 @@ impl ClaudePanel {
                 visible.then(|| self.page_ink_map(view, p).map(|m| (on_screen, m))).flatten()
             })
             .collect();
-        let ink = |r: &Rect| -> f64 {
+        let raw_ink = |r: &Rect| -> f64 {
             sheets
                 .iter()
                 .filter(|(s, _)| s.intersects(r))
@@ -2688,6 +2695,8 @@ impl ClaudePanel {
                 })
                 .sum()
         };
+        // Luft um die Karte: Inhalt direkt an ihrem Rand zählt wie verdeckt
+        let ink = |r: &Rect| raw_ink(&r.expand(CARD_AIR));
         let (shapes, link_points) = c.guide_shapes();
         let mut marks: Vec<Rect> = shapes
             .iter()
@@ -2717,7 +2726,7 @@ impl ClaudePanel {
     /// Verdeckt die Karte in voller Breite Inhalt, eine schmalere probieren: Oft ist der freie
     /// Rand neben dem Text nur knapp zu schmal. Gibt Breite und Abstand zurück, wenn es sich lohnt.
     fn narrower_spot(&self, view: &DocView, page: usize, anchor: Rect, card: (f64, f64), best: Fit) -> Option<(i32, (f64, f64))> {
-        [320, 290, GUIDE_NARROWEST].into_iter().filter(|w| (*w as f64) < card.0 - 4.0).find_map(|w| {
+        [430, 400, GUIDE_NARROWEST].into_iter().filter(|w| (*w as f64) < card.0 - 4.0).find_map(|w| {
             // gleicher Inhalt, schmaler umbrochen: etwa gleiche Fläche
             let slim = (w as f64, card.1 * card.0 / w as f64);
             let (offset, fit, _) = self.solve_card_spot(view, page, anchor, slim, None);
@@ -3351,6 +3360,16 @@ impl ClaudePanel {
         });
     }
 
+    /// Fenster öffnen und eine Frage vorbereiten, die der Nutzer noch ergänzt.
+    pub fn draft(self: &Rc<Self>, text: &str) {
+        if !self.is_open() {
+            self.open();
+        }
+        self.entry.set_text(text);
+        self.entry.grab_focus();
+        self.entry.set_position(-1);
+    }
+
     pub fn ask(self: &Rc<Self>, question: &str) {
         if !self.is_open() {
             self.open();
@@ -3920,7 +3939,7 @@ impl ClaudePanel {
 
     /// Text in der Lernkarte, der Formeln enthalten darf.
     fn extra_text(&self, text: &str) -> Rich {
-        let r = Rich::new(330.0);
+        let r = Rich::new(GUIDE_TEXT);
         r.set(text, &self.engine);
         self.extra_rich.borrow_mut().push(r.clone());
         r

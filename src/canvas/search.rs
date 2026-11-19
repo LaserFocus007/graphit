@@ -16,6 +16,58 @@ impl State {
         };
         self.text_cache.entry(idx).or_insert_with(|| crate::pdftext::load(&pdf, idx).map(Arc::new)).clone()
     }
+
+    /// PDF-Zeichen direkt unter dem Bildschirmpunkt: Seite, Text und Zeichenindex.
+    pub(super) fn text_at(&mut self, x: f64, y: f64) -> Option<(usize, Arc<PageText>, usize)> {
+        let (i, p) = self.page_at(x, y, 0.0)?;
+        let text = self.page_text(i)?;
+        let q = Pt::new(p.x, self.doc.pages[i].borrow().bg.display_to_pdf(p.y));
+        let (k, d) = text.nearest(q)?;
+        (d < 2.0).then_some((i, text, k))
+    }
+
+    /// Ausgewählter Text auf dem Bildschirm, als Rechteck um alle Zeilen.
+    fn text_sel_screen_rect(&self) -> Option<Rect> {
+        let t = self.text_sel.as_ref()?;
+        let i = self.doc.index_of(&t.page)?;
+        let o = self.page_origin(i);
+        let bg = t.page.borrow().bg.clone();
+        let r = t.text.line_rects(t.ia, t.ib).iter().map(|r| to_display(&bg, r)).reduce(|a, b| a.union(&b))?;
+        let (z, cam) = (self.zoom, self.cam);
+        Some(Rect::new((o.x + r.x0 - cam.x) * z, (o.y + r.y0 - cam.y) * z, (o.x + r.x1 - cam.x) * z, (o.y + r.y1 - cam.y) * z))
+    }
+}
+
+impl Canvas {
+    /// Ausgewählter PDF-Text als Zeichenkette.
+    pub fn text_selection(&self) -> Option<String> {
+        let st = self.st();
+        let t = st.text_sel.as_ref()?;
+        let (a, b) = (t.ia.min(t.ib), t.ia.max(t.ib).min(t.text.chars.len().saturating_sub(1)));
+        let s: String = t.text.chars[a..=b].iter().collect();
+        let s = s.trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
+    /// Ausgewählten Text mit dem Marker hervorheben.
+    pub fn highlight_text_selection(&self) {
+        let t = self.st().text_sel.take();
+        if let Some(t) = t {
+            self.finish_text_mark(t.page, t.text, t.ia, t.ib);
+        }
+        self.changed();
+    }
+
+    pub fn clear_text_selection(&self) {
+        if self.st().text_sel.take().is_some() {
+            self.changed();
+        }
+    }
+
+    /// Wo die Leiste zur Textauswahl hingehört (Bildschirmkoordinaten des Canvas).
+    pub fn text_selection_rect(&self) -> Option<Rect> {
+        self.st().text_sel_screen_rect()
+    }
 }
 
 /// PDF-Rechteck → angezeigte Seitenkoordinaten (berücksichtigt eingefügte Lücken).
@@ -46,7 +98,7 @@ impl Canvas {
     pub(super) fn text_mark_motion(st: &mut State, s: &Sample) {
         let zoom = st.zoom;
         let cam = st.cam;
-        if let Some(Action::TextMark { page, origin, text, ib, .. }) = &mut st.action {
+        if let Some(Action::TextMark { page, origin, text, ib, .. } | Action::TextSelect { page, origin, text, ib, .. }) = &mut st.action {
             let p = Pt::new(cam.x + s.x / zoom - origin.x, cam.y + s.y / zoom - origin.y);
             let q = Pt::new(p.x, page.borrow().bg.display_to_pdf(p.y));
             if let Some((i, _)) = text.nearest(q) {
@@ -187,6 +239,20 @@ impl Canvas {
                 for r in rs {
                     snap.append_color(&c, &rect(o, &r.expand(1.0)));
                 }
+            }
+        }
+        // Textauswahl wie in einem PDF-Reader: blau hinterlegt
+        let sel = match &st.action {
+            Some(Action::TextSelect { page, origin, text, ia, ib }) => Some((page.clone(), *origin, text.clone(), *ia, *ib)),
+            _ => st.text_sel.as_ref().and_then(|t| Some((t.page.clone(), st.page_origin(st.doc.index_of(&t.page)?), t.text.clone(), t.ia, t.ib))),
+        };
+        if let Some((page, origin, text, ia, ib)) = sel {
+            let accent = self.color_lookup("accent_color").unwrap_or(gdk::RGBA::new(0.21, 0.52, 0.89, 1.0));
+            let c = gdk::RGBA::new(accent.red(), accent.green(), accent.blue(), 0.28);
+            let bg = page.borrow().bg.clone();
+            for r in text.line_rects(ia, ib) {
+                let r = to_display(&bg, &r).expand(0.6);
+                snap.append_color(&c, &rect(origin, &r));
             }
         }
         if let Some(Action::TextMark { page, origin, text, ia, ib }) = &st.action {

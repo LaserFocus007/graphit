@@ -27,7 +27,7 @@ impl Tool {
             Tool::Select => crate::i18n::tl("Auswahl"),
             Tool::Shape => crate::i18n::tl("Formen"),
             Tool::Text => "Text",
-            Tool::Hand => "Hand",
+            Tool::Hand => crate::i18n::tl("Text auswählen und verschieben"),
             Tool::Space => crate::i18n::tl("Platz einfügen"),
             Tool::Ask => crate::i18n::tl("Einkreisen und Claude fragen"),
             Tool::Laser => crate::i18n::tl("Laserpointer"),

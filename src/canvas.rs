@@ -358,6 +358,16 @@ enum Action {
     Radial { center: (f64, f64), moved: bool },
     /// Marker an PDF-Text: Zeichenbereich [ia, ib]
     TextMark { page: PageRef, origin: Pt, text: Arc<crate::pdftext::PageText>, ia: usize, ib: usize },
+    /// Maus zieht über PDF-Text: Text auswählen wie in einem PDF-Reader
+    TextSelect { page: PageRef, origin: Pt, text: Arc<crate::pdftext::PageText>, ia: usize, ib: usize },
+}
+
+/// Ausgewählter PDF-Text (Zeichenbereich [ia, ib]), zum Kopieren, Hervorheben oder Fragen.
+pub struct TextSel {
+    page: PageRef,
+    text: Arc<crate::pdftext::PageText>,
+    ia: usize,
+    ib: usize,
 }
 
 impl Action {
@@ -376,6 +386,7 @@ impl Action {
             Action::PageHeight { .. } => "Seitenhöhe",
             Action::Radial { .. } => "Radialmenü offen",
             Action::TextMark { .. } => "Text markieren",
+            Action::TextSelect { .. } => "Text auswählen",
         }
     }
 }
@@ -426,6 +437,14 @@ pub struct State {
     search_idx: usize,
     pub text: Option<TextEdit>,
     radial: Option<RadialMenu>,
+    /// ausgewählter PDF-Text
+    text_sel: Option<TextSel>,
+    /// beim Aufsetzen war etwas ausgewählt oder offen: ein Tipp schließt das nur
+    quiet_tap: bool,
+    /// Werkzeug des gerade nicht benutzten Geräts: Maus und Stift haben je ihr eigenes
+    other_tool: Tool,
+    /// Mauszeiger steht über PDF-Text
+    over_text: bool,
     /// laufender Tipp-Kandidat bei Radierer/Auswahl/Form/Platz/Hand: (Start, Bildschirmpunkt, zu weit bewegt)
     tap: Option<(Instant, (f64, f64), bool)>,
     /// gemerkte Leseposition, wird beim ersten Layout angefahren
@@ -477,6 +496,10 @@ impl State {
             search_idx: 0,
             text: None,
             radial: None,
+            text_sel: None,
+            quiet_tap: false,
+            other_tool: Tool::Hand,
+            over_text: false,
             tap: None,
             restore: None,
             remembered: None,
@@ -1592,6 +1615,18 @@ impl Canvas {
         self.changed();
     }
 
+    /// Maus mit der Hand über PDF-Text: Textcursor zeigen, Ziehen wählt dann Text aus.
+    fn update_over_text(&self, x: f64, y: f64) {
+        let changed = {
+            let mut st = self.st();
+            let over = st.mouse_pointer && st.tools.tool == Tool::Hand && st.action.is_none() && st.text_at(x, y).is_some();
+            std::mem::replace(&mut st.over_text, over) != over
+        };
+        if changed {
+            self.update_cursor();
+        }
+    }
+
     pub fn set_tool(&self, t: Tool) {
         // Radierer behält eine Auswahl mit Bildern: darin wird dann radiert
         let keep = t == Tool::Select
@@ -1619,10 +1654,18 @@ impl Canvas {
     fn set_mouse_pointer(&self, on: bool) {
         let changed = {
             let mut st = self.st();
-            std::mem::replace(&mut st.mouse_pointer, on) != on
+            let changed = std::mem::replace(&mut st.mouse_pointer, on) != on;
+            if changed && st.action.is_none() {
+                // Gerät gewechselt: jedes behält sein eigenes Werkzeug, die Maus startet als Hand
+                let st = &mut *st;
+                std::mem::swap(&mut st.other_tool, &mut st.tools.tool);
+                st.over_text = false;
+            }
+            changed
         };
         if changed {
-            self.update_cursor();
+            // Dock zeigt das Werkzeug des neuen Geräts
+            self.changed();
         }
     }
 
@@ -1631,6 +1674,7 @@ impl Canvas {
             let st = self.st();
             if st.mouse_pointer {
                 let name = match st.tools.tool {
+                    Tool::Hand if st.over_text => "text",
                     Tool::Hand => "grab",
                     Tool::Laser => "none",
                     Tool::Text => "text",
@@ -1876,6 +1920,7 @@ impl Canvas {
                 if redraw {
                     c.queue_draw();
                 }
+                c.update_over_text(x, y);
             }
         });
         let weak = self.downgrade();

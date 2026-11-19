@@ -27,6 +27,8 @@ const CSS: &str = r#"
 }
 .fk-dock button { min-width: 34px; min-height: 34px; padding: 0; border-radius: 17px; }
 .fk-dock button.fk-tool:checked { background-color: alpha(@accent_bg_color, .22); color: @accent_color; }
+.fk-textbar > contents { padding: 3px; border-radius: 12px; }
+.fk-textbar button { padding: 4px 10px; min-height: 30px; border-radius: 9px; }
 .fk-dock separator { margin: 6px 4px; }
 .fk-swatch { min-width: 20px; min-height: 20px; border-radius: 10px; box-shadow: inset 0 0 0 1px alpha(black, .18); }
 .fk-dock button.fk-color { min-width: 28px; min-height: 28px; border-radius: 14px; }
@@ -171,6 +173,8 @@ pub struct Win {
     pub claude: Rc<crate::claude::ClaudePanel>,
     dock: gtk::Box,
     tool_buttons: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
+    /// Leiste über ausgewähltem PDF-Text
+    text_bar: RefCell<Option<gtk::Popover>>,
     color_buttons: RefCell<Vec<(usize, gtk::Button)>>,
     width_buttons: RefCell<Vec<gtk::Button>>,
     tabs: adw::TabView,
@@ -448,6 +452,7 @@ impl Win {
             claude,
             dock,
             tool_buttons: RefCell::new(Vec::new()),
+            text_bar: RefCell::new(None),
             color_buttons: RefCell::new(Vec::new()),
             width_buttons: RefCell::new(Vec::new()),
             tabs,
@@ -952,7 +957,7 @@ impl Win {
     // ---------------------------------------------------------------- Dock
 
     fn build_dock(self: &Rc<Self>) {
-        let tools = [Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Select, Tool::Shape, Tool::Text, Tool::Space, Tool::Laser, Tool::Ask];
+        let tools = [Tool::Hand, Tool::Pen, Tool::Highlighter, Tool::Eraser, Tool::Select, Tool::Shape, Tool::Text, Tool::Space, Tool::Laser, Tool::Ask];
         let mut group: Option<gtk::ToggleButton> = None;
         for t in tools {
             let b = gtk::ToggleButton::new();
@@ -1315,11 +1320,91 @@ impl Win {
             }
             crate::canvas::Request::Claude => self.claude.toggle_touch(),
             crate::canvas::Request::ClaudeRegion(png, page, area) => self.claude.ask_region(&png, page, area),
+            crate::canvas::Request::TextBar => self.show_text_bar(),
+        }
+    }
+
+    /// Kleine Leiste über ausgewähltem PDF-Text, wie in einem PDF-Reader.
+    fn show_text_bar(self: &Rc<Self>) {
+        self.close_text_bar();
+        let c = self.canvas();
+        if c.text_selection_rect().is_none() {
+            return;
+        }
+        let pop = gtk::Popover::new();
+        pop.set_parent(&c);
+        pop.set_autohide(false);
+        pop.set_has_arrow(false);
+        pop.set_position(gtk::PositionType::Top);
+        pop.add_css_class("fk-textbar");
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        let button = |icon: &str, label: &str| {
+            let b = gtk::Button::new();
+            let inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            inner.append(&gtk::Image::from_icon_name(icon));
+            inner.append(&gtk::Label::new(Some(label)));
+            b.set_child(Some(&inner));
+            b.add_css_class("flat");
+            row.append(&b);
+            b
+        };
+        let copy = button("edit-copy-symbolic", crate::i18n::tl("Kopieren"));
+        let mark = button(Tool::Highlighter.icon(), crate::i18n::tl("Hervorheben"));
+        let ask = button("fk-spark-symbolic", crate::i18n::tl("Fragen"));
+        let w = Rc::downgrade(self);
+        copy.connect_clicked(move |_| {
+            if let Some(w) = w.upgrade() {
+                if let Some(t) = w.canvas().text_selection() {
+                    w.canvas().clipboard().set_text(&t);
+                    w.toast(crate::i18n::tl("Text kopiert"));
+                }
+                w.canvas().clear_text_selection();
+            }
+        });
+        let w = Rc::downgrade(self);
+        mark.connect_clicked(move |_| {
+            if let Some(w) = w.upgrade() {
+                w.canvas().highlight_text_selection();
+            }
+        });
+        let w = Rc::downgrade(self);
+        ask.connect_clicked(move |_| {
+            if let Some(w) = w.upgrade() {
+                if let Some(t) = w.canvas().text_selection() {
+                    let flat = t.split_whitespace().collect::<Vec<_>>().join(" ");
+                    w.canvas().clear_text_selection();
+                    w.claude.draft(&format!("„{flat}“ "));
+                }
+            }
+        });
+        pop.set_child(Some(&row));
+        self.text_bar.replace(Some(pop.clone()));
+        self.place_text_bar();
+        pop.popup();
+    }
+
+    /// Leiste der Auswahl nachführen beim Scrollen und Zoomen, ohne Auswahl schließen.
+    fn place_text_bar(&self) {
+        let Some(pop) = self.text_bar.borrow().clone() else { return };
+        match self.canvas().text_selection_rect() {
+            Some(r) if pop.parent().is_some_and(|p| p == self.canvas().upcast::<gtk::Widget>()) => {
+                let at = gdk::Rectangle::new(r.x0 as i32, (r.y0 - 6.0) as i32, (r.x1 - r.x0).max(1.0) as i32, 1);
+                pop.set_pointing_to(Some(&at));
+            }
+            _ => self.close_text_bar(),
+        }
+    }
+
+    fn close_text_bar(&self) {
+        if let Some(pop) = self.text_bar.take() {
+            pop.popdown();
+            pop.unparent();
         }
     }
 
     /// Aktualisiert Titel, Dock-Zustand usw. nach Änderungen im aktiven Canvas.
     pub fn refresh(&self) {
+        self.place_text_bar();
         if self.stack.visible_child_name().as_deref() == Some("library") && self.current.borrow().is_none() {
             self.title.set_title("Graphit");
             self.title.set_subtitle(crate::i18n::tl("Bibliothek"));

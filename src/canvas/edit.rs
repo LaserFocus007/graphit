@@ -87,8 +87,6 @@ pub enum RadialItem {
     Close,
     Undo,
     Redo,
-    Paste,
-    Claude,
     Color(usize),
     Tool(Tool),
 }
@@ -99,24 +97,21 @@ pub enum Request {
     Claude,
     /// eingekreister Ausschnitt: Bild, Seite, Bereich in Seitenanteilen
     ClaudeRegion(Vec<u8>, usize, [f64; 4]),
+    /// PDF-Text ausgewählt: Leiste mit Kopieren, Hervorheben und Fragen zeigen
+    TextBar,
 }
 
-const R_CENTER: f64 = 30.0;
-const R_COLORS: f64 = 78.0;
-const R_TOOLS: f64 = 132.0;
-/// Äußerer Ring im Uhrzeigersinn ab oben: Rückgängig links, Wiederholen rechts.
-const RADIAL_RING: [RadialItem; 11] = [
-    RadialItem::Tool(Tool::Ask),
-    RadialItem::Tool(Tool::Laser),
+/// Kompakter Ring: Mitte schließt, innen die Werkzeuge, außen die Farben.
+const R_CENTER: f64 = 21.0;
+const R_TOOLS: f64 = 55.0;
+const R_COLORS: f64 = 94.0;
+/// Innerer Ring im Uhrzeigersinn ab oben: Rückgängig links, Wiederholen rechts.
+const RADIAL_RING: [RadialItem; 5] = [
     RadialItem::Tool(Tool::Pen),
-    RadialItem::Tool(Tool::Highlighter),
     RadialItem::Redo,
-    RadialItem::Tool(Tool::Shape),
     RadialItem::Tool(Tool::Space),
-    RadialItem::Claude,
-    RadialItem::Paste,
+    RadialItem::Tool(Tool::Ask),
     RadialItem::Undo,
-    RadialItem::Tool(Tool::Hand),
 ];
 
 /// Welcher Eintrag des Radialmenüs liegt unter dem Punkt?
@@ -126,15 +121,15 @@ pub fn radial_hit(c: (f64, f64), p: (f64, f64)) -> Option<RadialItem> {
     if d < R_CENTER {
         return Some(RadialItem::Close);
     }
-    if d > R_TOOLS + 40.0 {
+    if d > R_COLORS + 30.0 {
         return None;
     }
     let ang = dx.atan2(-dy).rem_euclid(TAU);
-    if d < R_COLORS {
-        return Some(RadialItem::Color((((ang + PI / 8.0) / (PI / 4.0)) as usize) % 8));
+    let pick = |n: usize| (((ang + PI / n as f64) / (TAU / n as f64)) as usize) % n;
+    if d < R_TOOLS {
+        return Some(RADIAL_RING[pick(RADIAL_RING.len())]);
     }
-    let step = TAU / RADIAL_RING.len() as f64;
-    Some(RADIAL_RING[(((ang + step / 2.0) / step) as usize) % RADIAL_RING.len()])
+    Some(RadialItem::Color(pick(RADIAL_COLORS.len())))
 }
 
 /// One-Euro-Filter (Casiez et al.): glättet stark, solange der Stift langsam ist (gegen
@@ -205,7 +200,7 @@ mod one_euro_tests {
 }
 
 fn seg_angle(i: usize) -> f64 {
-    i as f64 * PI / 4.0
+    i as f64 * TAU / RADIAL_COLORS.len() as f64
 }
 
 fn ring_angle(i: usize) -> f64 {
@@ -270,6 +265,12 @@ impl Canvas {
             }
             self.changed();
             return;
+        }
+        // War etwas ausgewählt oder offen, beendet ein kurzer Tipp nur das
+        {
+            let mut st = self.st();
+            let had_text = st.text_sel.take().is_some();
+            st.quiet_tap = had_text || st.sel.is_some() || st.text.is_some();
         }
         // Laserpointer: nur Spur, nichts in die Notiz
         if tool == Tool::Laser {
@@ -434,7 +435,12 @@ impl Canvas {
                 return;
             }
             Tool::Hand => {
-                st.action = Some(Action::Pan { last: (s.x, s.y) });
+                // Maus auf PDF-Text wählt Text aus wie in einem PDF-Reader, sonst wird verschoben
+                let hit = if stylus { None } else { st.text_at(s.x, s.y) };
+                st.action = Some(match hit {
+                    Some((i, text, k)) => Action::TextSelect { page: st.doc.pages[i].clone(), origin: st.page_origin(i), text, ia: k, ib: k },
+                    None => Action::Pan { last: (s.x, s.y) },
+                });
                 Post::None
             }
         };
@@ -758,7 +764,7 @@ impl Canvas {
                 page.borrow_mut().height = h;
                 relayout = true;
             }
-            Some(Action::TextMark { .. }) => {
+            Some(Action::TextMark { .. } | Action::TextSelect { .. }) => {
                 Canvas::text_mark_motion(&mut st, last);
             }
             Some(Action::Radial { center, moved }) => {
@@ -842,6 +848,12 @@ impl Canvas {
             }
             Some(Action::Space { page, y0, y, .. }) => self.insert_space(&page, y0, y - y0),
             Some(Action::TextMark { page, text, ia, ib, .. }) => self.finish_text_mark(page, text, ia, ib),
+            Some(Action::TextSelect { page, text, ia, ib, .. }) => {
+                if ia != ib {
+                    self.st().text_sel = Some(super::TextSel { page, text, ia, ib });
+                    self.request(Request::TextBar);
+                }
+            }
             Some(Action::PageHeight { page, h0, .. }) => {
                 let mut st = self.st();
                 let (w, h, bg) = {
@@ -923,6 +935,9 @@ impl Canvas {
                 }
             }
             Action::Lasso { page, pts, .. } => {
+                if self.st().quiet_tap {
+                    return None;
+                }
                 if try_select && self.select_at(page, pts[0]) {
                     return None;
                 }
@@ -930,7 +945,7 @@ impl Canvas {
             Action::Shape { .. } | Action::Space { .. } | Action::Pan { .. } => {}
             _ => return Some(action),
         }
-        if !open {
+        if !open || self.st().quiet_tap {
             return Some(action);
         }
         self.st().radial = Some(RadialMenu { center: at, hover: None });
@@ -952,6 +967,10 @@ impl Canvas {
         };
         self.st().last_stroke_end = Some(Instant::now());
         if is_tap {
+            // es war etwas ausgewählt: der Tipp hat es nur beendet, kein Punkt und kein Menü
+            if self.st().quiet_tap {
+                return;
+            }
             if try_select && self.select_at(&live.page, live.pts[0]) {
                 return;
             }
@@ -1760,12 +1779,6 @@ impl Canvas {
                 if item == RadialItem::Undo { self.undo() } else { self.redo() }
                 self.st().radial = Some(RadialMenu { center, hover: None });
             }
-            RadialItem::Claude => self.request(Request::Claude),
-            RadialItem::Paste => {
-                // an der Stelle einfügen, wo das Menü geöffnet wurde
-                self.st().hover = Some(center);
-                self.request(Request::Paste);
-            }
             RadialItem::Color(i) => {
                 let c = PALETTE[RADIAL_COLORS[i]];
                 if !self.recolor_selection(c) {
@@ -1942,41 +1955,45 @@ impl Canvas {
         }
     }
 
-    fn color_lookup(&self, name: &str) -> Option<gdk::RGBA> {
+    pub(super) fn color_lookup(&self, name: &str) -> Option<gdk::RGBA> {
         #[allow(deprecated)]
         self.style_context().lookup_color(name)
     }
 
     fn draw_radial(&self, snap: &gtk::Snapshot, r: &RadialMenu, tools: &ToolState, dark: bool, accent: gdk::RGBA) {
         let c = r.center;
-        let (bg, bg2, fg) = if dark {
-            (gdk::RGBA::new(0.17, 0.17, 0.19, 0.97), gdk::RGBA::new(0.22, 0.22, 0.25, 1.0), gdk::RGBA::new(0.95, 0.95, 0.95, 1.0))
+        let (disc, inner, fg, line) = if dark {
+            (gdk::RGBA::new(0.13, 0.13, 0.15, 0.96), gdk::RGBA::new(1.0, 1.0, 1.0, 0.06), gdk::RGBA::new(0.93, 0.93, 0.95, 1.0), gdk::RGBA::new(1.0, 1.0, 1.0, 0.09))
         } else {
-            (gdk::RGBA::new(0.99, 0.99, 0.99, 0.97), gdk::RGBA::new(0.93, 0.93, 0.94, 1.0), gdk::RGBA::new(0.15, 0.15, 0.17, 1.0))
+            (gdk::RGBA::new(0.99, 0.99, 1.0, 0.97), gdk::RGBA::new(0.0, 0.0, 0.05, 0.045), gdk::RGBA::new(0.16, 0.16, 0.19, 1.0), gdk::RGBA::new(0.0, 0.0, 0.0, 0.08))
         };
-        // Schatten + Grundscheibe
-        let outer = graphene::Rect::new((c.0 - R_TOOLS) as f32, (c.1 - R_TOOLS) as f32, (2.0 * R_TOOLS) as f32, (2.0 * R_TOOLS) as f32);
-        snap.append_outset_shadow(&gsk::RoundedRect::from_rect(outer, R_TOOLS as f32), &gdk::RGBA::new(0.0, 0.0, 0.0, 0.3), 0.0, 3.0, 0.0, 14.0);
-        snap.append_fill(&circle_path(c, R_TOOLS), gsk::FillRule::Winding, &bg);
-        snap.append_fill(&circle_path(c, R_COLORS), gsk::FillRule::Winding, &bg2);
-        // Hover-Segment
+        // weicher Schatten und Scheibe
+        let outer = graphene::Rect::new((c.0 - R_COLORS) as f32, (c.1 - R_COLORS) as f32, (2.0 * R_COLORS) as f32, (2.0 * R_COLORS) as f32);
+        let round = gsk::RoundedRect::from_rect(outer, R_COLORS as f32);
+        snap.append_outset_shadow(&round, &gdk::RGBA::new(0.0, 0.0, 0.0, if dark { 0.45 } else { 0.18 }), 0.0, 6.0, 0.0, 22.0);
+        snap.append_outset_shadow(&round, &gdk::RGBA::new(0.0, 0.0, 0.0, 0.12), 0.0, 1.0, 0.0, 3.0);
+        snap.append_fill(&circle_path(c, R_COLORS), gsk::FillRule::Winding, &disc);
+        snap.append_stroke(&circle_path(c, R_COLORS - 0.5), &gsk::Stroke::new(1.0), &line);
+        snap.append_fill(&circle_path(c, R_TOOLS), gsk::FillRule::Winding, &inner);
+        snap.append_stroke(&circle_path(c, R_TOOLS), &gsk::Stroke::new(1.0), &line);
+        // Hover: zartes Segment
         let mut hl = accent;
-        hl.set_alpha(0.25);
+        hl.set_alpha(if dark { 0.22 } else { 0.14 });
+        let gap = 0.03;
         match r.hover {
             Some(RadialItem::Color(i)) => {
-                let a = seg_angle(i);
-                snap.append_fill(&sector(c, R_CENTER, R_COLORS, a - PI / 8.0, a + PI / 8.0), gsk::FillRule::Winding, &hl);
+                let (a, half) = (seg_angle(i), PI / RADIAL_COLORS.len() as f64);
+                snap.append_fill(&sector(c, R_TOOLS + 3.0, R_COLORS - 3.0, a - half + gap, a + half - gap), gsk::FillRule::Winding, &hl);
             }
-            Some(RadialItem::Close) => snap.append_fill(&circle_path(c, R_CENTER), gsk::FillRule::Winding, &hl),
+            Some(RadialItem::Close) => snap.append_fill(&circle_path(c, R_CENTER - 2.0), gsk::FillRule::Winding, &hl),
             Some(item) => {
                 if let Some(i) = RADIAL_RING.iter().position(|x| *x == item) {
                     let (a, half) = (ring_angle(i), PI / RADIAL_RING.len() as f64);
-                    snap.append_fill(&sector(c, R_COLORS, R_TOOLS, a - half, a + half), gsk::FillRule::Winding, &hl);
+                    snap.append_fill(&sector(c, R_CENTER + 2.0, R_TOOLS - 3.0, a - half + gap, a + half - gap), gsk::FillRule::Winding, &hl);
                 }
             }
             None => {}
         }
-        // Werkzeuge
         let theme = gtk::IconTheme::for_display(&self.display());
         let sf = self.scale_factor();
         let icon = |name: &str, x: f64, y: f64, size: f64, color: gdk::RGBA| {
@@ -1986,32 +2003,44 @@ impl Canvas {
             p.snapshot_symbolic(snap.upcast_ref::<gdk::Snapshot>(), size, size, &[color]);
             snap.restore();
         };
-        let rm = (R_COLORS + R_TOOLS) / 2.0;
+        // Werkzeuge innen; das aktive bekommt eine Kapsel in Akzentfarbe
+        let rm = (R_CENTER + R_TOOLS) / 2.0 + 1.0;
         for (i, item) in RADIAL_RING.iter().enumerate() {
             let a = ring_angle(i);
-            let (name, col) = match item {
-                RadialItem::Tool(t) => (t.icon(), if *t == tools.tool { accent } else { fg }),
-                RadialItem::Undo => ("edit-undo-symbolic", fg),
-                RadialItem::Redo => ("edit-redo-symbolic", fg),
-                RadialItem::Paste => ("edit-paste-symbolic", fg),
-                RadialItem::Claude => ("fk-spark-symbolic", gdk::RGBA::new(0.85, 0.47, 0.34, 1.0)),
+            let at = (c.0 + rm * a.sin(), c.1 - rm * a.cos());
+            let (name, active) = match item {
+                RadialItem::Tool(t) => (t.icon(), *t == tools.tool),
+                RadialItem::Undo => ("edit-undo-symbolic", false),
+                RadialItem::Redo => ("edit-redo-symbolic", false),
                 _ => continue,
             };
-            icon(name, c.0 + rm * a.sin(), c.1 - rm * a.cos(), 24.0, col);
+            let col = if active {
+                let mut bgc = accent;
+                bgc.set_alpha(if dark { 0.3 } else { 0.16 });
+                snap.append_fill(&circle_path(at, 13.5), gsk::FillRule::Winding, &bgc);
+                accent
+            } else {
+                fg
+            };
+            icon(name, at.0, at.1, 18.0, col);
         }
-        // Farben
-        let rc = (R_CENTER + R_COLORS) / 2.0;
+        // Farben außen
+        let rc = (R_TOOLS + R_COLORS) / 2.0;
         let cur = if tools.tool == Tool::Highlighter { tools.highlighter.color } else { tools.pen.color };
         for (i, col) in RADIAL_COLORS.iter().map(|&k| &PALETTE[k]).enumerate() {
             let a = seg_angle(i);
             let p = (c.0 + rc * a.sin(), c.1 - rc * a.cos());
             let same = (col.r - cur.r).abs() < 0.01 && (col.g - cur.g).abs() < 0.01 && (col.b - cur.b).abs() < 0.01;
+            let big = r.hover == Some(RadialItem::Color(i));
+            let rr = if big { 11.5 } else { 10.0 };
             if same {
-                snap.append_stroke(&circle_path(p, 13.0), &gsk::Stroke::new(2.0), &accent);
+                snap.append_stroke(&circle_path(p, rr + 4.0), &gsk::Stroke::new(2.0), &accent);
             }
-            snap.append_fill(&circle_path(p, 9.5), gsk::FillRule::Winding, &rgba(*col));
+            snap.append_fill(&circle_path(p, rr), gsk::FillRule::Winding, &rgba(*col));
+            // feiner Rand, damit Schwarz auf Dunkel und Gelb auf Hell sichtbar bleiben
+            snap.append_stroke(&circle_path(p, rr - 0.5), &gsk::Stroke::new(1.0), &line);
         }
         // Mitte: schließen
-        icon("window-close-symbolic", c.0, c.1, 16.0, fg);
+        icon("window-close-symbolic", c.0, c.1, 14.0, fg);
     }
 }

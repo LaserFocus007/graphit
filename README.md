@@ -32,7 +32,8 @@ Graphit opens your existing Xournal++ notebooks and PDFs, keeps up with the pen 
 
 **Pen and touch**
 - Palm rejection: rest your hand on the screen while fingers pan and zoom, with smooth kinetic scrolling
-- Radial menu right at the pen tip for tools, colors, undo and paste
+- Compact radial menu at the pen tip with colors, pen, undo, redo, insert space and Ask Claude
+- Mouse works like in a PDF reader: drag over text to select it, copy, highlight or ask about it, drag anywhere else to pan. Mouse and pen each keep their own tool
 - Configurable pen buttons and eraser end
 - Laser pointer with a glowing trail for presenting, gone as soon as the pen leaves the screen
 
@@ -67,7 +68,7 @@ Graphit opens your existing Xournal++ notebooks and PDFs, keeps up with the pen 
   </tr>
   <tr>
     <td><strong>Shapes clean themselves up</strong> when you lift the pen.</td>
-    <td><strong>Everything at the pen tip.</strong> Tools, colors, undo and paste without reaching for the toolbar.</td>
+    <td><strong>Everything at the pen tip.</strong> Colors, pen, undo and redo without reaching for the toolbar.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/library.png" alt="The library with recently opened notes and course folders"></td>

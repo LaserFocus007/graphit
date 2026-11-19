@@ -371,6 +371,11 @@ impl DocView {
     }
 
     pub fn copy(&self, cut: bool) {
+        // ausgewählter PDF-Text geht als ganz normaler Text in die Zwischenablage
+        if let Some(t) = self.canvas.text_selection() {
+            self.canvas.clipboard().set_text(&t);
+            return;
+        }
         if !self.canvas.copy_selection() {
             return;
         }
