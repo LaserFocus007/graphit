@@ -43,14 +43,18 @@ macro_rules! say {
 }
 
 /// Lädt Piper und die Stimmen; dieselbe Datei liegt im Paket unter /usr/share/graphit.
+#[cfg(not(windows))]
 const INSTALL_SCRIPT: &str = include_str!("../tools/install-voice.sh");
+/// Unter Windows dasselbe als PowerShell-Skript, mit Graphits Datenordner als Ziel.
+#[cfg(windows)]
+const INSTALL_SCRIPT: &str = include_str!("../tools/install-voice.ps1");
 
 fn voice_dir() -> PathBuf {
     glib::user_data_dir().join("graphit").join("piper")
 }
 
 fn piper_bin() -> Option<PathBuf> {
-    Some(voice_dir().join("piper").join("piper")).filter(|b| b.exists())
+    Some(voice_dir().join("piper").join(crate::platform::exe("piper"))).filter(|b| b.exists())
 }
 
 fn voice_model(lang: Lang) -> Option<PathBuf> {
@@ -90,6 +94,39 @@ pub fn install(done: impl FnOnce(bool) + 'static) {
     if INSTALLING.swap(true, std::sync::atomic::Ordering::Relaxed) {
         return;
     }
+    #[cfg(windows)]
+    {
+        glib::spawn_future_local(async move {
+            let ok = gio::spawn_blocking(install_windows).await.unwrap_or(false);
+            INSTALLING.store(false, std::sync::atomic::Ordering::Relaxed);
+            done(ok && natural_voices());
+        });
+    }
+    #[cfg(not(windows))]
+    install_unix(done);
+}
+
+/// PowerShell-Skript in den Cache schreiben und ohne Konsolenfenster ausführen.
+#[cfg(windows)]
+fn install_windows() -> bool {
+    let script = glib::user_cache_dir().join("graphit").join("install-voice.ps1");
+    let _ = std::fs::create_dir_all(script.parent().unwrap_or(Path::new(".")));
+    if std::fs::write(&script, INSTALL_SCRIPT).is_err() {
+        return false;
+    }
+    crate::platform::command("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&script)
+        .arg("-Dir")
+        .arg(voice_dir())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+#[cfg(not(windows))]
+fn install_unix(done: impl FnOnce(bool) + 'static) {
     let started = gio::Subprocess::newv(&["sh".as_ref(), "-s".as_ref(), "--".as_ref(), "all".as_ref()], gio::SubprocessFlags::STDIN_PIPE | gio::SubprocessFlags::STDOUT_SILENCE | gio::SubprocessFlags::STDERR_SILENCE);
     let Ok(proc) = started else {
         INSTALLING.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -113,9 +150,9 @@ impl Speaker {
     pub fn stop(&self) {
         let old = self.pids.replace(Arc::default());
         for pid in old.lock().unwrap().drain(..) {
-            let _ = Command::new("kill").arg(pid.to_string()).status();
+            crate::platform::kill(pid);
         }
-        if self.system.replace(false) {
+        if self.system.replace(false) && !cfg!(windows) {
             let _ = Command::new("spd-say").arg("-C").status();
         }
     }
@@ -131,9 +168,17 @@ impl Speaker {
         }
         let (Some(bin), Some(model)) = (piper_bin(), voice_model(lang)) else {
             self.system.set(true);
+            #[cfg(windows)]
+            self.say_system_windows(lang, text);
+            #[cfg(not(windows))]
             let _ = Command::new("spd-say").args(["-l", lang.code(), "-r", "10"]).arg(&text).status();
             return;
         };
+        #[cfg(windows)]
+        {
+            self.say_piper_windows(bin, model, text);
+            return;
+        }
         let rate = sample_rate(&model).to_string();
         let pids = self.pids.borrow().clone();
         std::thread::spawn(move || {
@@ -162,6 +207,70 @@ impl Speaker {
             }
             let _ = voice.wait();
             let _ = player.wait();
+        });
+    }
+
+    /// Windows: Piper schreibt eine WAV-Datei, PowerShell spielt sie ab (kein aplay).
+    #[cfg(windows)]
+    fn say_piper_windows(&self, bin: PathBuf, model: PathBuf, text: String) {
+        let pids = self.pids.borrow().clone();
+        std::thread::spawn(move || {
+            let wav = glib::user_cache_dir().join("graphit").join(format!("vorlesen-{}.wav", std::process::id()));
+            let _ = std::fs::create_dir_all(wav.parent().unwrap_or(Path::new(".")));
+            let Ok(mut voice) = crate::platform::command(&bin)
+                .args(["--sentence_silence", "0.25", "--model"])
+                .arg(&model)
+                .arg("--output_file")
+                .arg(&wav)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            else {
+                return;
+            };
+            pids.lock().unwrap().push(voice.id());
+            if let Some(mut input) = voice.stdin.take() {
+                let _ = input.write_all(text.as_bytes());
+            }
+            // abgebrochen, während Piper rechnete: nicht mehr abspielen
+            if !voice.wait().is_ok_and(|s| s.success()) || !pids.lock().unwrap().contains(&voice.id()) {
+                return;
+            }
+            let play = format!("(New-Object Media.SoundPlayer '{}').PlaySync()", wav.display().to_string().replace('\'', "''"));
+            let Ok(mut player) = crate::platform::command("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &play]).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+                return;
+            };
+            pids.lock().unwrap().push(player.id());
+            let _ = player.wait();
+        });
+    }
+
+    /// Windows: eingebaute Systemstimme (SAPI) in der Sprache des Texts, falls vorhanden.
+    #[cfg(windows)]
+    fn say_system_windows(&self, lang: Lang, text: String) {
+        let script = format!(
+            "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
+             $v = $s.GetInstalledVoices() | Where-Object {{ $_.VoiceInfo.Culture.Name -like '{}*' }} | Select-Object -First 1; \
+             if ($v) {{ $s.SelectVoice($v.VoiceInfo.Name) }}; $s.Speak([Console]::In.ReadToEnd())",
+            lang.code()
+        );
+        let pids = self.pids.borrow().clone();
+        std::thread::spawn(move || {
+            let Ok(mut child) = crate::platform::command("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            else {
+                return;
+            };
+            pids.lock().unwrap().push(child.id());
+            if let Some(mut input) = child.stdin.take() {
+                let _ = input.write_all(text.as_bytes());
+            }
+            let _ = child.wait();
         });
     }
 }

@@ -71,7 +71,7 @@ pub fn then(app: &adw::Application, done: impl FnOnce(&adw::Application) + 'stat
     folders.add(&folder_row(crate::i18n::tl("Altklausuren (optional)"), &window, exams.clone(), crate::i18n::tl("Keiner gewählt"), Rc::new(|_| {})));
 
     let helpers = adw::PreferencesGroup::builder().title(crate::i18n::tl("Optionale Helfer")).description(crate::i18n::tl("Graphit läuft auch ohne sie, nur die jeweilige Funktion fehlt dann.")).build();
-    let claude = present("claude") || glib::home_dir().join(".local/bin/claude").exists();
+    let claude = crate::claude::claude_binary().exists();
     helpers.add(&status_row("Claude Code", claude, crate::i18n::tl("Gefunden, die KI-Funktionen sind bereit"), crate::i18n::tl("Nicht gefunden: Installiere Claude Code und melde dich an, um die KI zu nutzen")));
     helpers.add(&status_row(crate::i18n::tl("LaTeX und Pandoc"), present("pdflatex") && present("pandoc"), crate::i18n::tl("Gefunden, Formeln werden sauber gesetzt"), crate::i18n::tl("Nicht gefunden: Formeln erscheinen in Claudes Antworten als Rohtext")));
 

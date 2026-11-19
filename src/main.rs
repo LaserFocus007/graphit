@@ -1,3 +1,6 @@
+// Unter Windows ohne Konsolenfenster starten (Debug-Builds behalten es für Ausgaben)
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod calibrate;
 mod canvas;
 mod claude;
@@ -12,6 +15,7 @@ mod latex;
 mod library;
 mod model;
 mod pdftext;
+mod platform;
 mod plot;
 mod pdfsearch;
 mod place;

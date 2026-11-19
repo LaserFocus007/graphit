@@ -8,7 +8,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -149,8 +149,14 @@ pub fn parse_line(line: &str) -> Vec<Event> {
 
 // ------------------------------------------------------------------------ Claude Code starten
 
-fn claude_binary() -> PathBuf {
-    glib::find_program_in_path("claude").unwrap_or_else(|| glib::home_dir().join(".local/bin/claude"))
+/// Claude Code: im PATH oder am Ort des offiziellen Installers (~/.local/bin). Unter Windows
+/// nur die echte claude.exe, ein npm-Wrapper (.cmd) verträgt die langen Argumente nicht.
+pub fn claude_binary() -> PathBuf {
+    let installed = glib::home_dir().join(".local").join("bin").join(crate::platform::exe("claude"));
+    if cfg!(windows) {
+        return if installed.exists() { installed } else { glib::find_program_in_path("claude.exe").unwrap_or(installed) };
+    }
+    glib::find_program_in_path("claude").unwrap_or(installed)
 }
 
 const SYSTEM_PROMPT: &str = r#"Du läufst eingebettet in Graphit, einer App für handschriftliche Notizen. Der Nutzer studiert, dein Arbeitsordner ist ein Studienmodul mit seinen Notizen und Unterlagen. Deine Antwort erscheint in einem kleinen Dialog.
@@ -213,7 +219,7 @@ struct Launched {
 }
 
 fn launch(dir: &Path, cache: &Path, prompt: &str, session: Option<&str>, model: &str, effort: &str) -> std::io::Result<Launched> {
-    let mut cmd = Command::new(claude_binary());
+    let mut cmd = crate::platform::command(claude_binary());
     cmd.current_dir(dir)
         .arg("-p")
         .arg(prompt)
@@ -425,7 +431,7 @@ impl Conv {
     fn stop(&self) {
         if let Some(pid) = self.pid.get().filter(|p| *p != 0) {
             self.stopped.set(true);
-            let _ = Command::new("kill").arg(pid.to_string()).status();
+            crate::platform::kill(pid);
         }
     }
 }

@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -377,7 +377,7 @@ fn tex_document(items: &[(String, bool)], ink: &str) -> String {
 }
 
 fn run_latex(dir: &Path, strict: bool) -> bool {
-    let child = Command::new("pdflatex")
+    let child = crate::platform::command("pdflatex")
         .args(["-interaction=nonstopmode", "-no-shell-escape"])
         .args(strict.then_some("-halt-on-error"))
         .arg("-output-directory")
@@ -560,7 +560,7 @@ fn document_png(md: &str) -> Option<Vec<u8>> {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    let mut pandoc = Command::new("pandoc")
+    let mut pandoc = crate::platform::command("pandoc")
         .args(["-f", "markdown+tex_math_dollars+tex_math_single_backslash", "-t", "latex", "--wrap=none"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn answer_as_note_image() {
-        if Command::new("pandoc").arg("--version").stdout(Stdio::null()).status().is_err() {
+        if crate::platform::command("pandoc").arg("--version").stdout(Stdio::null()).status().is_err() {
             return;
         }
         let png = document_png("**Größe:** H₂ und Δ $x^2$\n\n$$\\frac{a}{b}$$\n\n- Punkt\n\n| Stoff | 50 % |\n|---|---|\n| H₂O | $k_1$ |").expect("Bild");
@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn sets_formulas() {
-        if Command::new("pdflatex").arg("--version").stdout(Stdio::null()).status().is_err() {
+        if crate::platform::command("pdflatex").arg("--version").stdout(Stdio::null()).status().is_err() {
             return;
         }
         let items = vec![(r"\frac{\partial L}{\partial \dot q_i}".to_string(), true), (r"x_i^2".to_string(), false)];
