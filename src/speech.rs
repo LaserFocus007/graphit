@@ -4,7 +4,9 @@
 use std::cell::RefCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+#[cfg(not(windows))]
+use std::process::Command;
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use gtk::{gio, glib};
@@ -68,6 +70,7 @@ pub fn natural_voices() -> bool {
 }
 
 /// Abtastrate aus der Beschreibung der Stimme.
+#[cfg(not(windows))]
 fn sample_rate(model: &Path) -> u64 {
     std::fs::read_to_string(model.with_extension("onnx.json"))
         .ok()
@@ -152,7 +155,9 @@ impl Speaker {
         for pid in old.lock().unwrap().drain(..) {
             crate::platform::kill(pid);
         }
-        if self.system.replace(false) && !cfg!(windows) {
+        // unter Windows läuft die Systemstimme als eigener Prozess und ist oben schon beendet
+        #[cfg(not(windows))]
+        if self.system.replace(false) {
             let _ = Command::new("spd-say").arg("-C").status();
         }
     }
@@ -175,10 +180,14 @@ impl Speaker {
             return;
         };
         #[cfg(windows)]
-        {
-            self.say_piper_windows(bin, model, text);
-            return;
-        }
+        self.say_piper_windows(bin, model, text);
+        #[cfg(not(windows))]
+        self.say_piper_unix(bin, model, text);
+    }
+
+    /// Linux: Piper liefert rohe Samples, aplay spielt sie sofort ab.
+    #[cfg(not(windows))]
+    fn say_piper_unix(&self, bin: PathBuf, model: PathBuf, text: String) {
         let rate = sample_rate(&model).to_string();
         let pids = self.pids.borrow().clone();
         std::thread::spawn(move || {

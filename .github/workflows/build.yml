@@ -9,7 +9,7 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install GTK, libadwaita and poppler
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libpoppler-glib-dev
       - uses: dtolnay/rust-toolchain@stable
@@ -18,7 +18,7 @@ jobs:
         run: cargo test --release
       - name: Build .deb
         run: sh packaging/build-deb.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: graphit-linux-deb
           path: graphit_*_amd64.deb
@@ -29,7 +29,7 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -47,7 +47,7 @@ jobs:
         run: cargo test --release
       - name: Build portable zip
         run: sh packaging/windows/bundle.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: graphit-windows
           path: dist/graphit-*-windows-x64.zip
