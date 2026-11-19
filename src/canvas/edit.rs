@@ -121,7 +121,8 @@ pub fn radial_hit(c: (f64, f64), p: (f64, f64)) -> Option<RadialItem> {
     if d < R_CENTER {
         return Some(RadialItem::Close);
     }
-    if d > R_COLORS + 30.0 {
+    // nur innerhalb der Scheibe: ein Tipp knapp daneben schließt bloß das Menü
+    if d > R_COLORS {
         return None;
     }
     let ang = dx.atan2(-dy).rem_euclid(TAU);
