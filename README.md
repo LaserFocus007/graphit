@@ -44,6 +44,7 @@ Graphit opens your existing Xournal++ notebooks and PDFs, keeps up with the pen 
 **Documents**
 - Opens and saves Xournal++ `.xopp` files as they are, no conversion
 - Annotate PDFs and export the result back to PDF
+- Follows PDF links: click a reference to jump there, Alt+Left to jump back
 - Tabs, plus two reading panes for keeping a script next to your notes
 - Page sidebar with thumbnails for moving and deleting pages
 - Graph, ruled, lined, dotted and plain paper, and dark paper for late nights

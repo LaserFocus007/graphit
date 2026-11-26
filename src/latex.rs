@@ -660,6 +660,20 @@ impl Formula {
         self.imp().depth.get()
     }
 
+    /// Breite und Höhe über der Grundlinie, bei Maßstab 1.
+    pub fn extent(&self) -> (f64, f64) {
+        let (w, above, _) = self.imp().size.get();
+        (w, above)
+    }
+
+    /// Formel mit der Grundlinie bei `baseline` zeichnen, `k` verkleinert oder vergrößert.
+    /// Gesetzt ist sie weiß auf durchsichtig, gedacht für dunkle Schilder.
+    pub fn paint(&self, snap: &gtk::Snapshot, x: f64, baseline: f64, k: f64) {
+        let Some(t) = &*self.imp().tex.borrow() else { return };
+        let (w, above, full) = self.imp().size.get();
+        snap.append_scaled_texture(t, gsk::ScalingFilter::Trilinear, &graphene::Rect::new(x as f32, (baseline - above * k) as f32, (w * k) as f32, (full * k) as f32));
+    }
+
     /// Verkleinerte Fassung für schmale Spalten.
     fn fitted(&self, max_w: f64) -> Formula {
         let (w, above, full) = self.imp().size.get();
@@ -700,7 +714,7 @@ impl Engine {
     }
 
     /// Fertige Formel, sonst wird sie zum Setzen vorgemerkt.
-    fn get(self: &Rc<Self>, tex: &str, display: bool) -> Option<Formula> {
+    pub fn get(self: &Rc<Self>, tex: &str, display: bool) -> Option<Formula> {
         let key = (tex.to_string(), display);
         if let Some(e) = self.cache.borrow().get(&key) {
             return match e {

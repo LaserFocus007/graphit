@@ -17,13 +17,35 @@ impl State {
         self.text_cache.entry(idx).or_insert_with(|| crate::pdftext::load(&pdf, idx).map(Arc::new)).clone()
     }
 
+    /// Verknüpfungen der PDF-Seite hinter Seite `i` (gecacht).
+    fn page_links(&mut self, i: usize) -> Option<Arc<Vec<(Rect, crate::pdftext::LinkTarget)>>> {
+        let pdf = self.doc.pdf_path.clone()?;
+        let idx = {
+            let p = self.doc.pages.get(i)?.borrow();
+            if !p.bg.is_pdf() {
+                return None;
+            }
+            p.bg.pdf_index()
+        };
+        Some(self.link_cache.entry(idx).or_insert_with(|| Arc::new(crate::pdftext::load_links(&pdf, idx))).clone())
+    }
+
+    /// Verknüpfung des PDFs unter dem Bildschirmpunkt.
+    pub(super) fn link_at(&mut self, x: f64, y: f64) -> Option<crate::pdftext::LinkTarget> {
+        let (i, p) = self.page_at(x, y, 0.0)?;
+        let links = self.page_links(i)?;
+        let q = Pt::new(p.x, self.doc.pages[i].borrow().bg.display_to_pdf(p.y));
+        links.iter().find(|(r, _)| r.expand(1.0).contains(q)).map(|(_, t)| t.clone())
+    }
+
     /// PDF-Zeichen direkt unter dem Bildschirmpunkt: Seite, Text und Zeichenindex.
     pub(super) fn text_at(&mut self, x: f64, y: f64) -> Option<(usize, Arc<PageText>, usize)> {
         let (i, p) = self.page_at(x, y, 0.0)?;
         let text = self.page_text(i)?;
         let q = Pt::new(p.x, self.doc.pages[i].borrow().bg.display_to_pdf(p.y));
         let (k, d) = text.nearest(q)?;
-        (d < 2.0).then_some((i, text, k))
+        // auch die Lücke zwischen Wörtern und Kapitälchen zählen noch als Text
+        (d < 5.0).then_some((i, text, k))
     }
 
     /// Ausgewählter Text auf dem Bildschirm, als Rechteck um alle Zeilen.
@@ -39,6 +61,56 @@ impl State {
 }
 
 impl Canvas {
+    /// Einer Verknüpfung des PDFs folgen: Sprung im Dokument oder Webadresse im Browser.
+    pub(super) fn follow_link(&self, target: crate::pdftext::LinkTarget) {
+        use crate::pdftext::LinkTarget;
+        match target {
+            LinkTarget::Uri(uri) => {
+                // nur Web und Mail, nichts, was ein Programm starten könnte
+                if ["http://", "https://", "mailto:"].iter().any(|s| uri.starts_with(s)) {
+                    let _ = gtk::gio::AppInfo::launch_default_for_uri(&uri, gtk::gio::AppLaunchContext::NONE);
+                }
+            }
+            LinkTarget::Page { page, y } => {
+                {
+                    let mut st = self.st();
+                    let Some(i) = st.doc.pages.iter().position(|p| {
+                        let b = p.borrow();
+                        b.bg.is_pdf() && b.bg.pdf_index() == page
+                    }) else {
+                        return;
+                    };
+                    let from = st.cam.y;
+                    st.link_back.push(from);
+                    if st.link_back.len() > 50 {
+                        st.link_back.remove(0);
+                    }
+                    let top = st.tops[i];
+                    st.cam.y = match y {
+                        // Ziel etwas unter der Oberkante, damit der Kontext davor sichtbar bleibt
+                        Some(y) => top + st.doc.pages[i].borrow().bg.pdf_to_display(y) - (st.view.1 / st.zoom) * 0.2,
+                        None => top - GAP / 2.0,
+                    };
+                    st.text_sel = None;
+                }
+                self.changed();
+            }
+        }
+    }
+
+    /// Zurück an die Stelle vor dem letzten Sprung (Alt+Links wie im PDF-Reader).
+    pub fn link_back(&self) -> bool {
+        let y = self.st().link_back.pop();
+        match y {
+            Some(y) => {
+                self.st().cam.y = y;
+                self.changed();
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Ausgewählter PDF-Text als Zeichenkette.
     pub fn text_selection(&self) -> Option<String> {
         let st = self.st();

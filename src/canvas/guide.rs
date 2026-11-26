@@ -475,29 +475,93 @@ impl Canvas {
                     continue;
                 }
                 if let (Some(t), Some(r)) = (&m.label, all) {
-                    self.draw_label(snap, t, *r);
+                    self.draw_label(snap, &st.labels, t, *r);
                 }
             }
         }
     }
 
-    /// Kleines Schild über der Stelle.
-    fn draw_label(&self, snap: &gtk::Snapshot, text: &str, r: Rect) {
-        let layout = self.create_pango_layout(Some(text));
+    /// Kleines Schild über der Stelle. `$…$` im Text wird als Formel gesetzt, bis sie fertig
+    /// ist (oder wenn sie sich nicht setzen lässt) steht der Quelltext da.
+    fn draw_label(&self, snap: &gtk::Snapshot, engine: &Rc<crate::latex::Engine>, text: &str, r: Rect) {
+        const MATH: f64 = 0.92;
+        enum Piece {
+            Text(gtk::pango::Layout),
+            Math(crate::latex::Formula),
+        }
         let mut font = gtk::pango::FontDescription::new();
         font.set_size(10 * gtk::pango::SCALE);
         font.set_weight(gtk::pango::Weight::Bold);
-        layout.set_font_description(Some(&font));
-        let (w, h) = layout.pixel_size();
+        let layout = |s: &str| {
+            let l = self.create_pango_layout(Some(s));
+            l.set_font_description(Some(&font));
+            l
+        };
+        // gerade Anzahl `$`: abwechselnd Text und Formel, sonst alles als Text
+        let parts: Vec<&str> = text.split('$').collect();
+        let mathy = parts.len() % 2 == 1 && parts.len() > 1;
+        let mut pieces: Vec<Piece> = Vec::new();
+        for (k, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            if mathy && k % 2 == 1 {
+                match engine.get(part, false) {
+                    Some(f) => pieces.push(Piece::Math(f)),
+                    None => pieces.push(Piece::Text(layout(part))),
+                }
+            } else {
+                pieces.push(Piece::Text(layout(if mathy { part } else { text })));
+                if !mathy {
+                    break;
+                }
+            }
+        }
+        // Maße: Breite, Höhe über und unter der gemeinsamen Grundlinie
+        let (mut w, mut above, mut below) = (0.0f64, 0.0f64, 0.0f64);
+        for p in &pieces {
+            match p {
+                Piece::Text(l) => {
+                    let (pw, ph) = l.pixel_size();
+                    let base = (l.baseline() / gtk::pango::SCALE) as f64;
+                    w += pw as f64;
+                    above = above.max(base);
+                    below = below.max(ph as f64 - base);
+                }
+                Piece::Math(f) => {
+                    let (fw, fa) = f.extent();
+                    w += fw * MATH;
+                    above = above.max(fa * MATH);
+                    below = below.max(f.depth() * MATH);
+                }
+            }
+        }
+        let h = above + below;
         let (x, y) = ((r.x0 as f32).max(4.0), (r.y0 as f32 - h as f32 - 16.0).max(4.0));
         let bg = graphene::Rect::new(x, y, w as f32 + 14.0, h as f32 + 6.0);
         snap.push_rounded_clip(&gsk::RoundedRect::from_rect(bg, 8.0));
         snap.append_color(&INK, &bg);
         snap.pop();
-        snap.save();
-        snap.translate(&graphene::Point::new(x + 7.0, y + 3.0));
-        snap.append_layout(&layout, &gdk::RGBA::WHITE);
-        snap.restore();
+        let base = (y as f64) + 3.0 + above;
+        let mut cx = x as f64 + 7.0;
+        for p in &pieces {
+            match p {
+                Piece::Text(l) => {
+                    let b = (l.baseline() / gtk::pango::SCALE) as f64;
+                    snap.save();
+                    snap.translate(&graphene::Point::new(cx as f32, (base - b) as f32));
+                    snap.append_layout(l, &gdk::RGBA::WHITE);
+                    snap.restore();
+                    cx += l.pixel_size().0 as f64;
+                }
+                Piece::Math(f) => {
+                    // zweimal leicht versetzt: hält mit der fetten Schrift daneben mit
+                    f.paint(snap, cx, base, MATH);
+                    f.paint(snap, cx + 0.45, base, MATH);
+                    cx += f.extent().0 * MATH;
+                }
+            }
+        }
     }
 }
 

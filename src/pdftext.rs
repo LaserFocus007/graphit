@@ -141,3 +141,90 @@ impl PageText {
     }
 }
 
+
+// ------------------------------------------------------------------------ Verknüpfungen
+
+/// Wohin eine Verknüpfung im PDF führt.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkTarget {
+    /// andere Stelle im Dokument: PDF-Seite (ab 0) und Höhe von oben, falls angegeben
+    Page { page: usize, y: Option<f64> },
+    /// Webadresse oder Mail
+    Uri(String),
+}
+
+/// Alle Verknüpfungen einer PDF-Seite: Fläche in Seitenkoordinaten (y von oben) und Ziel.
+pub fn load_links(pdf: &Path, idx: usize) -> Vec<(Rect, LinkTarget)> {
+    use std::ffi::CStr;
+    crate::render::with_pdf(pdf, |d| {
+        let Some(page) = d.page(idx as i32) else { return Vec::new() };
+        let height = page.size().1;
+        let mut out = Vec::new();
+        unsafe {
+            let doc: *mut poppler::ffi::PopplerDocument = d.to_glib_none().0;
+            let p: *mut poppler::ffi::PopplerPage = page.to_glib_none().0;
+            let list = poppler::ffi::poppler_page_get_link_mapping(p);
+            let mut node = list;
+            while !node.is_null() {
+                let m = (*node).data as *const poppler::ffi::PopplerLinkMapping;
+                node = (*node).next;
+                if m.is_null() || (*m).action.is_null() {
+                    continue;
+                }
+                let a = (*m).area;
+                // Poppler zählt y von unten
+                let area = Rect::new(a.x1.min(a.x2), height - a.y1.max(a.y2), a.x1.max(a.x2), height - a.y1.min(a.y2));
+                let action = (*m).action;
+                let target = match (*action).type_ {
+                    poppler::ffi::POPPLER_ACTION_URI => {
+                        let u = (*action).uri.uri;
+                        (!u.is_null()).then(|| LinkTarget::Uri(CStr::from_ptr(u).to_string_lossy().into_owned()))
+                    }
+                    poppler::ffi::POPPLER_ACTION_GOTO_DEST => {
+                        let dest = (*action).goto_dest.dest;
+                        if dest.is_null() {
+                            None
+                        } else if (*dest).type_ == poppler::ffi::POPPLER_DEST_NAMED {
+                            // benannte Stelle: im Dokument nachschlagen
+                            let name = (*dest).named_dest;
+                            let found = if name.is_null() { std::ptr::null_mut() } else { poppler::ffi::poppler_document_find_dest(doc, name) };
+                            let t = (!found.is_null()).then(|| dest_target(found, d));
+                            if !found.is_null() {
+                                poppler::ffi::poppler_dest_free(found);
+                            }
+                            t.flatten()
+                        } else {
+                            dest_target(dest, d)
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(t) = target {
+                    out.push((area, t));
+                }
+            }
+            if !list.is_null() {
+                poppler::ffi::poppler_page_free_link_mapping(list);
+            }
+        }
+        out
+    })
+    .unwrap_or_default()
+}
+
+/// Ziel einer aufgelösten Stelle: Seite (Poppler zählt ab 1) und Höhe von oben.
+unsafe fn dest_target(dest: *mut poppler::ffi::PopplerDest, doc: &poppler::Document) -> Option<LinkTarget> {
+    let n = unsafe { (*dest).page_num };
+    if n < 1 {
+        return None;
+    }
+    let page = n as usize - 1;
+    let y = match unsafe { (*dest).type_ } {
+        poppler::ffi::POPPLER_DEST_XYZ | poppler::ffi::POPPLER_DEST_FITH | poppler::ffi::POPPLER_DEST_FITBH | poppler::ffi::POPPLER_DEST_FITR => {
+            let top = unsafe { (*dest).top };
+            doc.page(page as i32).map(|p| (p.size().1 - top).max(0.0))
+        }
+        _ => None,
+    };
+    Some(LinkTarget::Page { page, y })
+}

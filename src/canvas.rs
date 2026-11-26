@@ -3,6 +3,7 @@
 //! GTK auf der GPU zusammensetzt.
 
 use std::cell::{Cell, RefCell, RefMut};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -430,6 +431,14 @@ pub struct State {
     thumbs_wanted: std::collections::HashSet<u64>,
     /// PDF-Text je PDF-Seitenindex (lazy)
     text_cache: std::collections::HashMap<usize, Option<Arc<crate::pdftext::PageText>>>,
+    /// Verknüpfungen je PDF-Seitenindex (lazy)
+    link_cache: std::collections::HashMap<usize, Arc<Vec<(Rect, crate::pdftext::LinkTarget)>>>,
+    /// Mauszeiger steht über einer Verknüpfung
+    over_link: bool,
+    /// Verknüpfung unter der Maus beim Aufsetzen und wo: ein Klick ohne Ziehen folgt ihr
+    link_press: Option<(crate::pdftext::LinkTarget, (f64, f64))>,
+    /// Lesepositionen vor Sprüngen über Verknüpfungen, für „zurück“
+    link_back: Vec<f64>,
     /// Suchtreffer: (Seiten-ID, Rechtecke in Seitenkoordinaten)
     search: Vec<(u64, Vec<Rect>)>,
     /// temporäres Zeichen von Claude
@@ -461,6 +470,8 @@ pub struct State {
     hover: Option<(f64, f64)>,
     /// Leuchtspur des Laserpointers
     laser: laser::Laser,
+    /// Gesetzte Formeln in den Schildern von Claudes Markierungen
+    labels: Rc<crate::latex::Engine>,
     needs_fit: bool,
     /// Seitenbreite halten, bis der Nutzer selbst zoomt
     auto_fit: bool,
@@ -491,6 +502,10 @@ impl State {
             last_stroke_end: None,
             thumbs_wanted: Default::default(),
             text_cache: Default::default(),
+            link_cache: Default::default(),
+            over_link: false,
+            link_press: None,
+            link_back: Vec::new(),
             search: Vec::new(),
             guide: None,
             search_idx: 0,
@@ -511,6 +526,7 @@ impl State {
             barrel: 0,
             hover: None,
             laser: laser::Laser::default(),
+            labels: Rc::default(),
             before_ask: None,
             needs_fit: true,
             auto_fit: true,
@@ -636,6 +652,8 @@ impl State {
         self.text = None;
         self.radial = None;
         self.text_cache.clear();
+        self.link_cache.clear();
+        self.link_back.clear();
         self.search.clear();
         self.guide = None;
         self.cam = Pt::new(0.0, 0.0);
@@ -1331,6 +1349,12 @@ mod imp {
             let obj = self.obj();
             let (pool, rx) = Pool::new(std::thread::available_parallelism().map(|n| n.get().clamp(2, 4)).unwrap_or(2));
             self.state.replace(Some(State::new(pool)));
+            let weak = obj.downgrade();
+            obj.st().labels.connect_ready(Rc::new(move || {
+                if let Some(c) = weak.upgrade() {
+                    c.queue_draw();
+                }
+            }));
             obj.set_focusable(true);
             obj.set_hexpand(true);
             obj.set_vexpand(true);
@@ -1519,6 +1543,7 @@ impl Canvas {
             st.cache.clear();
             st.pending.clear();
             st.text_cache.clear();
+            st.link_cache.clear();
             st.search.clear();
             st.last_submit = 0;
         }
@@ -1619,8 +1644,11 @@ impl Canvas {
     fn update_over_text(&self, x: f64, y: f64) {
         let changed = {
             let mut st = self.st();
-            let over = st.mouse_pointer && st.tools.tool == Tool::Hand && st.action.is_none() && st.text_at(x, y).is_some();
-            std::mem::replace(&mut st.over_text, over) != over
+            let active = st.mouse_pointer && st.tools.tool == Tool::Hand && st.action.is_none();
+            let link = active && st.link_at(x, y).is_some();
+            let over = active && st.text_at(x, y).is_some();
+            let moved = std::mem::replace(&mut st.over_link, link) != link;
+            std::mem::replace(&mut st.over_text, over) != over || moved
         };
         if changed {
             self.update_cursor();
@@ -1674,6 +1702,7 @@ impl Canvas {
             let st = self.st();
             if st.mouse_pointer {
                 let name = match st.tools.tool {
+                    Tool::Hand if st.over_link => "pointer",
                     Tool::Hand if st.over_text => "text",
                     Tool::Hand => "grab",
                     Tool::Laser => "none",

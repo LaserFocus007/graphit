@@ -436,6 +436,8 @@ impl Canvas {
                 return;
             }
             Tool::Hand => {
+                // Verknüpfung im PDF: ein Klick ohne Ziehen folgt ihr
+                st.link_press = st.link_at(s.x, s.y).map(|t| (t, (s.x, s.y)));
                 // Maus auf PDF-Text wählt Text aus wie in einem PDF-Reader, sonst wird verschoben
                 let hit = if stylus { None } else { st.text_at(s.x, s.y) };
                 st.action = Some(match hit {
@@ -803,6 +805,14 @@ impl Canvas {
         }
         self.stop_hold_timer();
         let action = self.st().action.take();
+        // Klick ohne Ziehen auf eine Verknüpfung: ihr folgen statt Text auszuwählen oder zu verschieben
+        let link = self.st().link_press.take();
+        if let (Some((target, (x, y))), Some(s), Some(Action::Pan { .. } | Action::TextSelect { .. })) = (link, s, &action) {
+            if (s.x - x).hypot(s.y - y) < 6.0 {
+                self.follow_link(target);
+                return;
+            }
+        }
         let tap = {
             let mut st = self.st();
             let ms = st.cfg.tap_ms;

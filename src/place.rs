@@ -30,7 +30,7 @@ const GAP: f64 = 6.0;
 
 const GUIDE_TEXT: &str = r#"# In die Notiz schreiben
 
-Schreibe die Datei CACHE/einfuegen.json. Graphit übernimmt sie sofort und löscht sie. Der Nutzer kann alles mit einem Rückgängig entfernen.
+Schreibe die Datei CACHE/einfuegen.json (gültiges JSON: bei LaTeX jeden Backslash verdoppeln, also "\\frac"; am sichersten mit einem kleinen Python-Skript und json.dump). Graphit übernimmt sie sofort und löscht sie. Der Nutzer kann alles mit einem Rückgängig entfernen.
 
 {"aenderungen":[ ... ], "geometrie":[5], "rueckgaengig":false}
 
@@ -197,9 +197,69 @@ fn parse_change(v: &Value) -> Result<Change, String> {
     Ok(Change { target, color, spot, content })
 }
 
+/// LaTeX in JSON: Claude schreibt oft `\partial` oder `\frac` mit einfachem Backslash. Das ist als
+/// JSON ungültig (`\p`) oder meint ein Steuerzeichen (`\f`, `\b`, `\t`, `\n`). Hier werden
+/// solche Backslashes in Strings verdoppelt; korrekt geschriebenes JSON bleibt unverändert.
+fn repair_escapes(text: &str) -> String {
+    // gehören nach `\t` / `\n` zu einem LaTeX-Befehl statt zu Tabulator und Zeilenumbruch
+    const COMMANDS: [&str; 14] = ["theta", "times", "text", "tau", "tan", "tilde", "triangle", "top", "nu", "neq", "nabla", "neg", "not", "ne"];
+    let c: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 16);
+    let (mut in_str, mut i) = (false, 0);
+    while i < c.len() {
+        let ch = c[i];
+        if !in_str {
+            in_str = ch == '"';
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_str = false;
+                out.push(ch);
+                i += 1;
+            }
+            '\\' => {
+                let next = c.get(i + 1).copied();
+                let run: String = c[i + 1..].iter().take_while(|x| x.is_ascii_alphabetic()).collect();
+                let valid = match next {
+                    Some('"' | '\\' | '/') => true,
+                    Some('u') => c.len() > i + 5 && c[i + 2..i + 6].iter().all(|x| x.is_ascii_hexdigit()),
+                    // Backspace, Seitenvorschub und Wagenrücklauf direkt vor Buchstaben sind nie gemeint
+                    Some('b' | 'f' | 'r') => run.len() == 1,
+                    Some('t' | 'n') => !COMMANDS.contains(&run.as_str()),
+                    _ => false,
+                };
+                if valid {
+                    out.push('\\');
+                    out.push(next.unwrap_or('\\'));
+                    i += 2;
+                } else {
+                    out.push_str("\\\\");
+                    i += 1;
+                }
+            }
+            _ => {
+                out.push(ch);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Warum die Datei kein gültiges JSON ist, mit Zeile und Spalte, damit Claude es gezielt behebt.
+fn json_problem(text: &str) -> String {
+    match serde_json::from_str::<Value>(&repair_escapes(text)) {
+        Err(e) => format!("einfuegen.json ist kein gültiges JSON: {e}. Tipp: Schreibe die Datei mit einem kleinen Python-Skript und json.dump, dann stimmen Anführungszeichen und Backslashes (LaTeX: \\\\frac)."),
+        Ok(_) => "einfuegen.json ist kein gültiges JSON".to_string(),
+    }
+}
+
 /// `None`: Datei ist noch nicht vollständig geschrieben oder kein gültiges JSON.
 fn parse_request(text: &str) -> Option<Request> {
-    let v: Value = serde_json::from_str(text).ok()?;
+    let v: Value = serde_json::from_str(&repair_escapes(text)).ok()?;
     v.is_object().then(|| Request {
         undo: v["rueckgaengig"].as_bool().unwrap_or(false),
         geometry: v["geometrie"].as_array().map(|a| a.iter().filter_map(|n| n.as_u64()).filter(|n| *n >= 1).map(|n| n as usize - 1).collect()).unwrap_or_default(),
@@ -634,7 +694,7 @@ pub async fn apply(view: &Rc<DocView>, cache: &Path, current: usize, last: &std:
     let Some(request) = parse_request(&text) else {
         if final_try {
             let _ = std::fs::remove_file(&file);
-            let errors = vec!["einfuegen.json ist kein gültiges JSON".to_string()];
+            let errors = vec![json_problem(&text)];
             let _ = std::fs::write(cache.join(RESULT), json!({"eingefuegt": 0, "fehler": errors}).to_string());
             return Some(Outcome { placed: 0, undone: false, errors });
         }
@@ -913,6 +973,25 @@ mod tests {
 
     fn one(v: Value) -> Change {
         parse_change(&v).unwrap()
+    }
+
+    #[test]
+    fn repairs_latex_backslashes() {
+        // korrektes JSON bleibt, wie es ist
+        let ok = r#"{"a":"x\\frac{1}{2}\n\"q\" \u00e4 \\"}"#;
+        assert_eq!(repair_escapes(ok), ok);
+        // einfache Backslashes: ungültige und solche, die ein Steuerzeichen ergäben
+        let raw = r#"{"text":"$\partial_t \rho = \frac{1}{2} \beta \theta \times \nu \underline{x}$"}"#;
+        let v: Value = serde_json::from_str(&repair_escapes(raw)).unwrap();
+        assert_eq!(v["text"], r"$\partial_t \rho = \frac{1}{2} \beta \theta \times \nu \underline{x}$");
+        // echte Zeilenumbrüche und Tabulatoren bleiben
+        let v: Value = serde_json::from_str(&repair_escapes(r#"{"t":"a\nNeu\tund\r\nEnde"}"#)).unwrap();
+        assert_eq!(v["t"], "a\nNeu\tund\r\nEnde");
+        // ganze Anfrage mit LaTeX wird angenommen
+        let req = parse_request(r#"{"aenderungen":[{"text":"$\partial u$","punkt":[0.1,0.1]}]}"#).unwrap();
+        assert_eq!(req.changes.len(), 1);
+        assert!(parse_request(r#"{"aenderungen":[{"text":"#).is_none());
+        assert!(json_problem(r#"{"a":"#).contains("kein gültiges JSON"));
     }
 
     #[test]

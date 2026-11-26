@@ -1620,6 +1620,9 @@ impl Win {
                 }
                 return glib::Propagation::Stop;
             }
+            if mods.contains(gdk::ModifierType::ALT_MASK) && key == gdk::Key::Left && c.link_back() {
+                return glib::Propagation::Stop;
+            }
             if mods.contains(gdk::ModifierType::ALT_MASK) || mods.contains(gdk::ModifierType::SUPER_MASK) {
                 return glib::Propagation::Proceed;
             }
